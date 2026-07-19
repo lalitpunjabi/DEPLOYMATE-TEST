@@ -1,0 +1,174 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #030712;
+  --color-panel: #090E1A;
+  --color-border: rgba(255, 255, 255, 0.04);
+  
+  --color-primary: #6366F1;
+  --color-primary-hover: #4F46E5;
+  --color-primary-light: #818CF8;
+  
+  --color-secondary: #06B6D4;
+  --color-secondary-hover: #0891B2;
+  --color-secondary-light: #22D3EE;
+  
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-danger: #F43F5E;
+  --color-muted: #64748B;
+  --color-text: #F8FAFC;
+  
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  
+  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.18);
+  --shadow-glow-success: 0 0 20px rgba(16, 185, 129, 0.18);
+  --shadow-glow-danger: 0 0 20px rgba(244, 63, 94, 0.18);
+}
+
+body {
+  @apply bg-background text-text font-sans antialiased overflow-x-hidden;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(6, 182, 212, 0.08) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(139, 92, 246, 0.05) 0px, transparent 50%);
+  background-attachment: fixed;
+  position: relative;
+}
+
+body::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.005) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(255, 255, 255, 0.005) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-background;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-900 rounded-full hover:bg-slate-800 transition-colors;
+}
+
+/* Glassmorphism Panel Utility */
+.glass-panel {
+  @apply bg-panel/40 backdrop-blur-xl border border-white/[0.04] rounded-xl;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+}
+
+.glass-panel-hover {
+  @apply hover:bg-panel/60 hover:border-primary/20 transition-all duration-300;
+}
+
+/* Gradient text */
+.gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-primary-light to-secondary-light;
+}
+
+/* Custom Animations */
+@keyframes pulse-glow-blue {
+  0%, 100% {
+    opacity: 0.7;
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.2);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 25px rgba(99, 102, 241, 0.5);
+  }
+}
+
+@keyframes pulse-glow-green {
+  0%, 100% {
+    opacity: 0.8;
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 25px rgba(16, 185, 129, 0.5);
+  }
+}
+
+@keyframes pulse-glow-red {
+  0%, 100% {
+    opacity: 0.7;
+    box-shadow: 0 0 12px rgba(244, 63, 94, 0.2);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 25px rgba(244, 63, 94, 0.5);
+  }
+}
+
+@keyframes scan-line {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+.glow-blue {
+  animation: pulse-glow-blue 2s infinite ease-in-out;
+}
+
+.glow-green {
+  animation: pulse-glow-green 2s infinite ease-in-out;
+}
+
+.glow-red {
+  animation: pulse-glow-red 1.5s infinite ease-in-out;
+}
+
+.scan-effect {
+  position: relative;
+  overflow: hidden;
+}
+
+.scan-effect::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(99, 102, 241, 0.05) 50%,
+    transparent 100%
+  );
+  animation: scan-line 3s infinite linear;
+  pointer-events: none;
+}
+
+/* Noise overlay */
+.noise-bg {
+  position: relative;
+}
+
+.noise-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
