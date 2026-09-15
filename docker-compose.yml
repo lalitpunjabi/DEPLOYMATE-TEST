@@ -1,20 +1,18 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
     container_name: deploymate-db
     restart: always
     environment:
-      POSTGRES_DB: deploymate
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: ${DB_NAME:-deploymate}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgrespassword}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -30,10 +28,10 @@ services:
       NODE_ENV: production
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: postgrespassword
-      DB_NAME: deploymate
-      JWT_SECRET: deploymate-jwt-secret-key-change-in-production
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgrespassword}
+      DB_NAME: ${DB_NAME:-deploymate}
+      JWT_SECRET: ${JWT_SECRET:-deploymate-jwt-secret-key-change-in-production}
       AI_SERVICE_URL: http://ai-module:8000
     ports:
       - "5000:5000"
@@ -41,10 +39,10 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:5000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))\""]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
 
   ai-module:
     build:
@@ -54,14 +52,14 @@ services:
     restart: always
     environment:
       PORT: 8000
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       - "8000:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
 
   frontend:
     build:
@@ -71,8 +69,12 @@ services:
     restart: always
     ports:
       - "80:80"
+      - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+      ai-module:
+        condition: service_healthy
 
 volumes:
   postgres_data:

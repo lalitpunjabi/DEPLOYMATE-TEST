@@ -133,7 +133,30 @@ GEMINI_API_KEY=<your_gemini_api_key>
 
 ## 4. Installation & Booting Guide
 
-### Option A: Local Development Setup
+### Option A: Single-Command Docker Setup (Recommended)
+
+Run the entire DEPLOYMATE platform (Frontend, Backend API, AI Microservice, and PostgreSQL Database) with a **single command** — no need to open multiple terminal windows or execute manual database setup scripts!
+
+```bash
+docker compose up --build
+```
+
+**Automated Orchestration Features:**
+- **Automated Database Initialization**: Automatically runs SQL migrations (`001_init_schema.sql`), creates database tables, seeds RBAC roles (`Super Admin`, `DevOps Engineer`, `Developer`, `Viewer`), and initializes default Super Admin credentials (`admin@deploymate.com` / `admin123`).
+- **Health-Checked Dependency Graph**: Backend waits for PostgreSQL container health checks, and Frontend waits for Backend readiness before launching.
+- **Single-Page Application Fallback**: Nginx configured with SPA routing so page refreshes and direct URLs work smoothly.
+
+**Exposed Endpoints:**
+- **Frontend Portal**: `http://localhost` (also accessible on `http://localhost:5173`)
+- **Backend API Gateway**: `http://localhost:5000`
+- **FastAPI AI Microservice**: `http://localhost:8000`
+- **PostgreSQL Database**: `localhost:5432`
+
+---
+
+### Option B: Local Multi-Terminal Development Setup
+
+If you prefer running services individually for code editing:
 
 1. **Database Migration & Initialization**:
    ```bash
@@ -141,14 +164,12 @@ GEMINI_API_KEY=<your_gemini_api_key>
    npm install
    npx ts-node src/config/initDb.ts
    ```
-   *Runs versioned SQL migrations (`001_init_schema.sql`), seeds enterprise roles (`Super Admin`, `DevOps Engineer`, `Developer`, `Viewer`), and creates the default Super Admin user (`admin@deploymate.com` / `admin123`).*
 
 2. **Start Backend Control Plane**:
    ```bash
    cd backend
    npm run dev
    ```
-   *Launches API gateway on `http://localhost:5000` with WebSockets on `/ws/logs` and metrics on `/metrics`.*
 
 3. **Start AI Microservice**:
    ```bash
@@ -156,7 +177,6 @@ GEMINI_API_KEY=<your_gemini_api_key>
    pip install -r requirements.txt
    python main.py
    ```
-   *Launches FastAPI AI engine on `http://localhost:8000`.*
 
 4. **Start React Frontend Client**:
    ```bash
@@ -164,23 +184,6 @@ GEMINI_API_KEY=<your_gemini_api_key>
    npm install
    npm run dev
    ```
-   *Launches Vite developer portal on `http://localhost:5173`.*
-
----
-
-### Option B: Docker Compose Container Setup
-
-To run the complete stack inside isolated containers:
-
-```bash
-docker compose up --build
-```
-
-Services created:
-- `deploymate-db` (PostgreSQL on port 5432)
-- `deploymate-backend` (Node.js API on port 5000)
-- `deploymate-ai-module` (FastAPI AI microservice on port 8000)
-- `deploymate-frontend` (Nginx React client on port 80)
 
 ---
 

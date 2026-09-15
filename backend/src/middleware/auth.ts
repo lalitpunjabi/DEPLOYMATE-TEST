@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'deploymate-jwt-secret-key-change-in-production';
+const getJwtSecret = () => process.env.JWT_SECRET || 'deploymate-jwt-secret-key-change-in-production';
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -28,7 +28,7 @@ export async function authenticateToken(
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const decoded = jwt.verify(token, getJwtSecret()) as { userId: string };
 
     // Query user and their role permissions
     const userRes = await query(

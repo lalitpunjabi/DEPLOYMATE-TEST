@@ -92,6 +92,15 @@ def ask_gemini(prompt: str, system_instruction: Optional[str] = None, response_j
         raise e
 
 # --- Routes ---
+@app.get("/")
+def root():
+    return {
+        "service": "Deploymate AI Engine API",
+        "status": "HEALTHY",
+        "swagger_docs": "http://localhost:8000/docs",
+        "health_check": "http://localhost:8000/health"
+    }
+
 @app.get("/health")
 def health():
     return {
@@ -115,7 +124,7 @@ def analyze_pipeline_failure(data: LogInput):
                 "Ensure npm run build completes before running docker build"
             ],
             "risk": "LOW",
-            "requiresApproval": false,
+            "requiresApproval": False,
             "suggested_fixes": "1. Verify that your compile script executes cleanly.\n2. Check if the output folder exists before executing Docker COPY."
         }
     
@@ -143,7 +152,7 @@ def analyze_pipeline_failure(data: LogInput):
             "evidence": ["Log failure traceback detected in pipeline execution."],
             "recommendations": ["Inspect step logs and retry pipeline run."],
             "risk": "LOW",
-            "requiresApproval": false
+            "requiresApproval": False
         }
 
 @app.post("/api/v1/ai/log-analysis")
@@ -164,7 +173,7 @@ def analyze_app_logs(data: LogInput):
                 "Restart application deployment"
             ],
             "risk": "MEDIUM",
-            "requiresApproval": true
+            "requiresApproval": True
         }
     
     system_prompt = (
@@ -184,7 +193,7 @@ def analyze_app_logs(data: LogInput):
             "evidence": ["Error logs detected in container stream."],
             "recommendations": ["Check backend database status and connection pools."],
             "risk": "LOW",
-            "requiresApproval": false
+            "requiresApproval": False
         }
 
 @app.post("/api/v1/ai/deployment-risk")

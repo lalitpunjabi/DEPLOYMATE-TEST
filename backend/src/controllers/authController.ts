@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'deploymate-jwt-super-secret-key-123456';
+const getJwtSecret = () => process.env.JWT_SECRET || 'deploymate-jwt-secret-key-change-in-production';
 
 export async function register(req: Request, res: Response): Promise<void> {
   const { name, email, password, roleName } = req.body;
@@ -99,7 +99,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     }
 
     // Generate JWT
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ userId: user.id }, getJwtSecret(), { expiresIn: '24h' });
 
     // Log audit log
     await query(
@@ -132,7 +132,7 @@ export async function logout(req: Request, res: Response): Promise<void> {
 
   if (token) {
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+      const decoded = jwt.verify(token, getJwtSecret()) as { userId: string };
       await query(
         `INSERT INTO audit_logs (user_id, action, resource, details)
          VALUES ($1, $2, $3, $4)`,

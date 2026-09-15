@@ -1,3 +1,9 @@
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load environment variables immediately before module imports evaluate process.env
+dotenv.config({ path: path.join(__dirname, '../.env') });
+
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -77,6 +83,17 @@ const limiter = rateLimit({
   message: { message: 'Too many requests from this IP, please try again later.' }
 });
 app.use('/api/', limiter);
+
+// Root Welcome Endpoint
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    name: 'DEPLOYMATE Enterprise Control Plane API Gateway',
+    status: 'HEALTHY',
+    frontend_portal: 'http://localhost:5173',
+    health_endpoint: 'http://localhost:5000/health',
+    metrics_endpoint: 'http://localhost:5000/metrics'
+  });
+});
 
 // Self-Observability & Platform Health Endpoints
 app.get('/health', (_req, res) => {
