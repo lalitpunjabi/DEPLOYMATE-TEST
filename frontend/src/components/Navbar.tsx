@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useDemo } from '../context/DemoContext';
 import { useAuth } from '../context/AuthContext';
@@ -7,7 +7,8 @@ import {
   Bell, 
   Cpu, 
   Play, 
-  RefreshCw
+  RefreshCw,
+  Server
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -15,8 +16,8 @@ export const Navbar: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { isSimulating, startSimulation, resetDemo, demoStage } = useDemo();
+  const [infraMode, setInfraMode] = useState<'REAL' | 'SIMULATED'>('SIMULATED');
 
-  // Simple path to breadcrumb formatter
   const getPageTitle = () => {
     const path = location.pathname;
     if (path === '/') return 'Dashboard';
@@ -25,7 +26,6 @@ export const Navbar: React.FC = () => {
   };
 
   const triggerSearch = () => {
-    // Programmatically dispatch Ctrl+K keyboard event to open command palette
     const event = new KeyboardEvent('keydown', {
       key: 'k',
       ctrlKey: true,
@@ -38,16 +38,25 @@ export const Navbar: React.FC = () => {
   return (
     <header className="fixed top-0 right-0 left-64 z-20 flex h-16 items-center justify-between border-b border-white/[0.04] bg-background/60 backdrop-blur-md px-8 select-none">
       
-      {/* Left: Page Title & Breadcrumb */}
+      {/* Left: Page Title & Infrastructure Mode */}
       <div className="flex items-center gap-4">
         <h2 className="text-sm font-bold tracking-tight text-text font-mono uppercase">{getPageTitle()}</h2>
         <span className="text-white/10">/</span>
         
-        {/* Workspace selector */}
-        <select className="bg-transparent border-0 font-semibold text-xs text-muted focus:outline-none focus:ring-0 cursor-pointer text-[10px] uppercase font-mono tracking-wider">
-          <option value="prod">WORKSPACE: AWS-STAGING-01</option>
-          <option value="test">WORKSPACE: LOCAL-MINIKUBE</option>
-        </select>
+        {/* Infrastructure Mode Selector */}
+        <div className="flex items-center gap-2 border border-white/[0.06] bg-slate-950/60 px-2.5 py-1 rounded-md">
+          <Server className={`h-3.5 w-3.5 ${infraMode === 'REAL' ? 'text-success' : 'text-amber-400'}`} />
+          <span className="text-[10px] font-mono text-muted uppercase">Infra:</span>
+          <button 
+            onClick={() => setInfraMode(infraMode === 'REAL' ? 'SIMULATED' : 'REAL')}
+            className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded transition-colors ${
+              infraMode === 'REAL' ? 'bg-success/20 text-success' : 'bg-amber-400/20 text-amber-400'
+            }`}
+            title="Click to toggle between Real Kubernetes cluster API and Simulation mode"
+          >
+            {infraMode === 'REAL' ? 'REAL CLUSTER' : 'SIMULATION MODE'}
+          </button>
+        </div>
       </div>
 
       {/* Center/Right: Controllers & Command triggers */}

@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'deploymate-jwt-super-secret-key-123456';
+const JWT_SECRET = process.env.JWT_SECRET || 'deploymate-jwt-secret-key-change-in-production';
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -59,8 +59,8 @@ export async function authenticateToken(
   }
 }
 
-// Middleware helper to check role permissions
-export function authorize(resource: string, action?: string) {
+// Granular permission check middleware
+export function checkPermission(permissionName: string) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ message: 'Unauthorized. User authentication required.' });
@@ -69,31 +69,34 @@ export function authorize(resource: string, action?: string) {
 
     const permissions = req.user.permissions;
 
-    // Super Admins have bypass permission
-    if (permissions && permissions.all === true) {
+    // Super Admins have full access
+    if (req.user.role === 'Super Admin' || (permissions && permissions.all === true)) {
       next();
       return;
     }
 
-    // Check specific resource permission
-    if (permissions && permissions[resource]) {
-      const resPerms = permissions[resource];
+    // Split permission into category and action (e.g. 'pipeline.execute' -> category 'pipeline', action 'execute')
+    const [category, action] = permissionName.split('.');
 
-      // If resource permission is boolean true, allow it
-      if (resPerms === true) {
+    if (permissions && permissions[category]) {
+      const categoryPerms = permissions[category];
+      if (categoryPerms === true) {
         next();
         return;
       }
-
-      // If resource permission is an array, check if action is included
-      if (Array.isArray(resPerms) && action && resPerms.includes(action)) {
+      if (Array.isArray(categoryPerms) && (categoryPerms.includes(action) || categoryPerms.includes('all') || categoryPerms.includes('manage'))) {
         next();
         return;
       }
     }
 
     res.status(403).json({
-      message: `Forbidden. You do not have permission to perform this action (${action || 'read'} on ${resource}).`,
+      message: `Forbidden. You lack explicit permission '${permissionName}' required for this operational route.`,
     });
   };
+}
+
+// Legacy helper compatibility
+export function authorize(resource: string, action?: string) {
+  return checkPermission(action ? `${resource}.${action}` : `${resource}.read`);
 }

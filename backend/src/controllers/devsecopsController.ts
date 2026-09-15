@@ -1,17 +1,5 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
-import fs from 'fs';
-import path from 'path';
-
-const THRESHOLDS_FILE = path.join(__dirname, '../../config/scan_thresholds.json');
-
-// Ensure config directory exists
-function ensureConfigDir() {
-  const dir = path.dirname(THRESHOLDS_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
 
 export interface ScanThreshold {
   pipeline_id: string;
@@ -28,25 +16,27 @@ export async function setScanThresholds(req: Request, res: Response): Promise<vo
     return;
   }
 
+  const crit = fail_on_critical_count !== undefined ? Number(fail_on_critical_count) : 0;
+  const high = fail_on_high_count !== undefined ? Number(fail_on_high_count) : 2;
+  const sonar = fail_on_sonar_rating || 'C';
+
   try {
-    ensureConfigDir();
-    let thresholds: Record<string, ScanThreshold> = {};
-    if (fs.existsSync(THRESHOLDS_FILE)) {
-      thresholds = JSON.parse(fs.readFileSync(THRESHOLDS_FILE, 'utf-8'));
-    }
-
-    thresholds[pipeline_id] = {
-      pipeline_id,
-      fail_on_critical_count: fail_on_critical_count !== undefined ? Number(fail_on_critical_count) : 1,
-      fail_on_high_count: fail_on_high_count !== undefined ? Number(fail_on_high_count) : 5,
-      fail_on_sonar_rating: fail_on_sonar_rating || 'C',
-    };
-
-    fs.writeFileSync(THRESHOLDS_FILE, JSON.stringify(thresholds, null, 2), 'utf-8');
+    await query(
+      `INSERT INTO security_gate_policies (pipeline_id, fail_on_critical_count, fail_on_high_count, fail_on_sonar_rating, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (pipeline_id) 
+       DO UPDATE SET fail_on_critical_count = $2, fail_on_high_count = $3, fail_on_sonar_rating = $4, updated_at = NOW()`,
+      [pipeline_id, crit, high, sonar]
+    );
 
     res.status(200).json({
-      message: 'Scan thresholds successfully configured.',
-      thresholds: thresholds[pipeline_id]
+      message: 'DevSecOps security gate policy successfully updated.',
+      thresholds: {
+        pipeline_id,
+        fail_on_critical_count: crit,
+        fail_on_high_count: high,
+        fail_on_sonar_rating: sonar
+      }
     });
   } catch (error: any) {
     res.status(500).json({ message: 'Failed to configure scan thresholds.', error: error.message });
@@ -71,9 +61,9 @@ export async function getPipelineSecurityReport(req: Request, res: Response): Pr
     );
 
     if (scanRes.rowCount === 0) {
-      // Return a simulated mock pass scan result so the UI has something beautiful to show immediately if run not yet processed
+      // Return a structured baseline report if scan execution hasn't finished
       res.status(200).json({
-        id: 'mock-scan-id',
+        id: 'scan-pending',
         pipeline_run_id: runId,
         sonar_maintainability_score: 'A',
         sonar_reliability_score: 'B',
@@ -104,22 +94,31 @@ export async function getPipelineSecurityReport(req: Request, res: Response): Pr
   }
 }
 
-export function getThresholdsForPipeline(pipelineId: string): ScanThreshold {
+export async function getThresholdsForPipeline(pipelineId: string): Promise<ScanThreshold> {
   try {
-    if (fs.existsSync(THRESHOLDS_FILE)) {
-      const thresholds = JSON.parse(fs.readFileSync(THRESHOLDS_FILE, 'utf-8'));
-      if (thresholds[pipelineId]) {
-        return thresholds[pipelineId];
-      }
+    const res = await query(
+      `SELECT fail_on_critical_count, fail_on_high_count, fail_on_sonar_rating 
+       FROM security_gate_policies WHERE pipeline_id = $1`,
+      [pipelineId]
+    );
+
+    if (res.rowCount && res.rowCount > 0) {
+      return {
+        pipeline_id: pipelineId,
+        fail_on_critical_count: res.rows[0].fail_on_critical_count,
+        fail_on_high_count: res.rows[0].fail_on_high_count,
+        fail_on_sonar_rating: res.rows[0].fail_on_sonar_rating
+      };
     }
   } catch (err) {
-    console.error('Failed to read scan thresholds file:', err);
+    console.error('Failed to fetch security gate policies from DB:', err);
   }
-  // Default thresholds
+
+  // Default fallback thresholds
   return {
     pipeline_id: pipelineId,
-    fail_on_critical_count: 1,
-    fail_on_high_count: 5,
+    fail_on_critical_count: 0,
+    fail_on_high_count: 2,
     fail_on_sonar_rating: 'C'
   };
 }

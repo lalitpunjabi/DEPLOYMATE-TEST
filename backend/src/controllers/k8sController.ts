@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { k8sService } from '../services/k8sService';
 import { query } from '../config/db';
+import { EventBus } from '../services/eventBus';
 
 export async function getNamespaces(_req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -65,10 +66,9 @@ export async function rollbackDeployment(req: AuthenticatedRequest, res: Respons
 
     // Save rollback deployment record in DB
     await query(
-      `INSERT INTO deployments (project_id, environment, namespace, deployment_name, image_tag, status, config_yaml)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      `INSERT INTO deployments (environment, namespace, deployment_name, image_tag, status, config_yaml)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [
-        null, // No project ID tied if done manually from cluster explorer
         namespace === 'default' ? 'dev' : 'staging',
         namespace,
         name,
@@ -90,6 +90,16 @@ export async function rollbackDeployment(req: AuthenticatedRequest, res: Respons
       ]
     );
 
+    // Emit EventBus event
+    await EventBus.emit({
+      eventType: 'DEPLOYMENT_ROLLED_BACK',
+      source: 'kubernetes',
+      severity: 'WARNING',
+      resource: name,
+      namespace,
+      metadata: { user: req.user.email }
+    });
+
     res.status(200).json({ message: `Deployment ${name} rolled back successfully.` });
   } catch (error: any) {
     console.error('Rollback deployment error:', error);
@@ -108,6 +118,13 @@ export async function canarySplit(req: AuthenticatedRequest, res: Response): Pro
   try {
     console.log(`[Canary Split] Setting Canary traffic allocation to ${weight}% on deployment "${name}" in namespace "${namespace}"`);
     
+    // Save/update canary weight on deployment in DB
+    await query(
+      `UPDATE deployments SET canary_weight = $1, updated_at = NOW()
+       WHERE deployment_name = $2 AND namespace = $3`,
+      [weight, name, namespace]
+    );
+
     if (req.user) {
       await query(
         `INSERT INTO audit_logs (user_id, action, resource, details)
@@ -120,6 +137,15 @@ export async function canarySplit(req: AuthenticatedRequest, res: Response): Pro
         ]
       );
     }
+
+    await EventBus.emit({
+      eventType: 'CANARY_TRAFFIC_SPLIT',
+      source: 'kubernetes',
+      severity: 'INFO',
+      resource: name,
+      namespace,
+      metadata: { weight, stable_weight: 100 - weight }
+    });
 
     res.status(200).json({
       message: `Canary traffic split of ${weight}% successfully applied to ${name}.`,
@@ -151,15 +177,15 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
     console.log(`[Blue-Green Swap] Swapping active router of service "${serviceName}" to "${activeColor}" in namespace "${namespace}"`);
 
     await query(
-      `INSERT INTO deployments (project_id, environment, namespace, deployment_name, image_tag, status, config_yaml)
+      `INSERT INTO deployments (environment, namespace, deployment_name, image_tag, status, blue_green_color, config_yaml)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
-        null,
         namespace === 'default' ? 'dev' : 'staging',
         namespace,
         serviceName,
         activeColor === 'green' ? 'v2.0.0-green' : 'v1.0.0-blue',
         'DEPLOYED',
+        activeColor,
         `# Blue-Green Router swapped active backend to label color: ${activeColor}`
       ]
     );
@@ -177,6 +203,15 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
       );
     }
 
+    await EventBus.emit({
+      eventType: 'BLUE_GREEN_ROUTER_SWAPPED',
+      source: 'kubernetes',
+      severity: 'INFO',
+      resource: serviceName,
+      namespace,
+      metadata: { activeColor }
+    });
+
     res.status(200).json({
       message: `Blue-Green active backend successfully swapped to ${activeColor.toUpperCase()}.`,
       details: {
@@ -192,4 +227,3 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
     res.status(500).json({ message: 'Failed to execute Blue-Green router swap.', error: error.message });
   }
 }
-

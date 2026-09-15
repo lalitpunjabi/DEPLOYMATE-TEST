@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
+import { EventBus } from '../services/eventBus';
 
 export async function injectChaos(req: Request, res: Response): Promise<void> {
   const { name, scenario_type, target_resource, duration_seconds } = req.body;
@@ -9,11 +10,15 @@ export async function injectChaos(req: Request, res: Response): Promise<void> {
     return;
   }
 
+  const duration = Number(duration_seconds);
+  if (duration > 300) {
+    res.status(400).json({ message: 'Safety Constraint: Maximum experiment duration is capped at 300 seconds.' });
+    return;
+  }
+
   try {
-    console.log(`[Chaos Monkey] Starting Experiment: "${name}". Scenario: ${scenario_type} targeting "${target_resource}"...`);
+    console.log(`[Resilience Lab] Executing Resilience Experiment: "${name}". Scenario: ${scenario_type} targeting "${target_resource}"...`);
     
-    // Simulate a resilience score calculation
-    // CPU_STRESS has lower score, POD_KILL is generally handled well (95+ score)
     let resilienceScore = 100;
     let description = '';
 
@@ -28,7 +33,7 @@ export async function injectChaos(req: Request, res: Response): Promise<void> {
       description = 'Latency threshold crossed (150ms delay). HTTP request queue limits saturated, minor HTTP 504 timeouts.';
     } else {
       resilienceScore = 90;
-      description = 'Simulation experiment executed successfully.';
+      description = 'Resilience experiment executed successfully.';
     }
 
     const reportJson = {
@@ -60,19 +65,28 @@ export async function injectChaos(req: Request, res: Response): Promise<void> {
         name,
         scenario_type,
         target_resource,
-        Number(duration_seconds),
+        duration,
         'COMPLETED',
         resilienceScore,
         JSON.stringify(reportJson)
       ]
     );
 
+    // Emit EventBus event
+    await EventBus.emit({
+      eventType: 'RESILIENCE_EXPERIMENT_COMPLETED',
+      source: 'chaos',
+      severity: resilienceScore < 80 ? 'WARNING' : 'INFO',
+      resource: target_resource,
+      metadata: { name, scenario_type, resilienceScore }
+    });
+
     res.status(201).json({
-      message: 'Chaos experiment executed successfully.',
+      message: 'Resilience experiment executed successfully.',
       experiment: insertRes.rows[0]
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Chaos injection failed.', error: error.message });
+    res.status(500).json({ message: 'Resilience experiment execution failed.', error: error.message });
   }
 }
 
@@ -81,6 +95,6 @@ export async function getChaosHistory(_req: Request, res: Response): Promise<voi
     const listRes = await query(`SELECT * FROM chaos_experiments ORDER BY executed_at DESC`);
     res.status(200).json(listRes.rows);
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve chaos history.', error: error.message });
+    res.status(500).json({ message: 'Failed to retrieve resilience history.', error: error.message });
   }
 }

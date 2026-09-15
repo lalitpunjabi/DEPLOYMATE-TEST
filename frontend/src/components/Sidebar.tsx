@@ -13,7 +13,8 @@ import {
   GitCompare,
   FileCode,
   HeartPulse,
-  Flame
+  Flame,
+  ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -28,10 +29,11 @@ export const Sidebar: React.FC = () => {
     { name: 'GitOps Controller', to: '/gitops', icon: GitCompare },
     { name: 'Terraform IaC', to: '/terraform', icon: FileCode },
     { name: 'SRE SLO Targets', to: '/sre', icon: HeartPulse },
-    { name: 'Chaos Engineering', to: '/chaos', icon: Flame },
+    { name: 'Resilience Lab', to: '/chaos', icon: Flame },
     { name: 'Monitoring', to: '/monitoring', icon: Activity },
     { name: 'Logs', to: '/logs', icon: Terminal },
     { name: 'AI Assistant', to: '/ai-assistant', icon: Cpu },
+    { name: 'Audit Logs', to: '/audit-logs', icon: ShieldCheck },
     { name: 'Settings', to: '/settings', icon: Settings },
   ];
 
@@ -45,11 +47,10 @@ export const Sidebar: React.FC = () => {
           </div>
           <div>
             <span className="font-bold text-lg text-text">DEPLOYMATE</span>
-            <span className="block text-[10px] text-primary-light font-mono -mt-1">v2.0.0-ENTERPRISE</span>
+            <span className="block text-[10px] text-primary-light font-mono -mt-1">ENTERPRISE PLATFORM</span>
           </div>
         </div>
       </div>
-
 
       {/* Nav Links */}
       <nav className="flex-1 space-y-1 px-4 py-6 overflow-y-auto">

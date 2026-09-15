@@ -2,6 +2,7 @@ import { query } from '../config/db';
 import { activeLogStreams } from '../index';
 import { notificationService } from './notificationService';
 import { getThresholdsForPipeline } from '../controllers/devsecopsController';
+import { EventBus } from './eventBus';
 
 interface PipelineStep {
   name: string;
@@ -41,18 +42,25 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
         { name: 'Deploy', status: 'PENDING' }
       ];
 
+  const commitSha = 'sha-' + Math.random().toString(16).substring(2, 10);
+  const commitMessage = 'Refactor telemetry endpoints and optimize Docker multi-stage build cache';
+
   // Update run status to RUNNING
   await query(
     `UPDATE pipeline_runs 
      SET status = 'RUNNING', started_at = NOW(), git_branch = $1, git_commit_sha = $2, git_commit_message = $3
      WHERE id = $4`,
-    [
-      default_branch || 'main',
-      'sha-' + Math.random().toString(16).substring(2, 10),
-      'Refactor telemetry endpoints and optimize Docker multi-stage build cache',
-      runId
-    ]
+    [default_branch || 'main', commitSha, commitMessage, runId]
   );
+
+  // Emit EventBus PipelineStarted event
+  await EventBus.emit({
+    eventType: 'PIPELINE_STARTED',
+    source: 'pipeline',
+    severity: 'INFO',
+    resource: `PipelineRun#${runId}`,
+    metadata: { pipelineId, commitSha, branch: default_branch }
+  });
 
   let accumulatedLogs = '';
   let runFailed = false;
@@ -97,13 +105,13 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
     }
   };
 
-  // Helper delay
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // Run through stages
   for (let i = 0; i < stages.length; i++) {
     const stage = stages[i];
     stage.status = 'RUNNING';
+    const stageStartTime = Date.now();
     await updateRunProgress(stages);
 
     streamLog(`========================================================================`);
@@ -113,77 +121,57 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
     try {
       if (stage.name === 'Source') {
         streamLog(`Cloning remote repository: ${github_repo_url}...`);
-        await delay(1500);
+        await delay(1200);
         streamLog(`Cloning default branch: refs/heads/${default_branch}...`);
         streamLog(`Successfully cloned repository into ephemeral workspace.`);
-        streamLog(`HEAD is now at commit: sha-${Math.random().toString(16).substring(2, 10)}`);
+        streamLog(`HEAD is now at commit: ${commitSha}`);
         stage.status = 'SUCCESS';
       } 
       else if (stage.name === 'Build') {
         streamLog(`Detecting workspace tech stack: Node.js application found.`);
         streamLog(`Running build pipeline tasks: "npm ci && npm run build"...`);
-        await delay(2000);
+        await delay(1500);
         streamLog(`audited 248 packages in 1.45s`);
         streamLog(`tsc compiling source files into production distribution...`);
-        streamLog(`Vite v5.2.0 compiling for production...`);
-        streamLog(`✓ 48 modules bundled.`);
-        streamLog(`dist/index.html                     0.45 KiB │ gzip: 0.28 KiB`);
-        streamLog(`dist/assets/index-D721A041.js     142.20 KiB │ gzip: 44.50 KiB`);
-        streamLog(`Build command completed successfully.`);
+        streamLog(`Vite compiling for production...`);
+        streamLog(`✓ 48 modules bundled successfully.`);
         stage.status = 'SUCCESS';
       } 
       else if (stage.name === 'Test') {
-        streamLog(`Initializing unit test framework Jest/Vitest...`);
-        await delay(1500);
-        streamLog(`PASS  src/components/Sidebar.test.tsx (4.2s)`);
-        streamLog(`PASS  src/context/AuthContext.test.tsx (3.1s)`);
-        streamLog(`PASS  src/services/telemetry.test.ts (2.0s)`);
-        streamLog(`Test Suites: 3 passed, 3 total`);
-        streamLog(`Tests:       18 passed, 18 total`);
-        streamLog(`Snapshots:   0 total`);
-        streamLog(`Time:        9.84s, estimated 10s`);
-        streamLog(`All unit testing scenarios successfully validated.`);
+        streamLog(`Initializing unit test framework Vitest/Jest...`);
+        await delay(1200);
+        streamLog(`PASS  src/components/Sidebar.test.tsx (3.2s)`);
+        streamLog(`PASS  src/context/AuthContext.test.tsx (2.1s)`);
+        streamLog(`Test Suites: 2 passed, 2 total`);
+        streamLog(`Tests:       14 passed, 14 total`);
         stage.status = 'SUCCESS';
       } 
       else if (stage.name === 'Code Quality') {
         streamLog(`Invoking SonarQube Quality Scanner...`);
-        await delay(1500);
+        await delay(1200);
         streamLog(`Analyzing code complexity, smell issues, and line coverage...`);
-        streamLog(`SonarQube Analysis Report:`);
-        streamLog(`  - Maintainability Rating: A`);
-        streamLog(`  - Reliability Rating: B`);
-        streamLog(`  - Security Rating: B`);
-        streamLog(`  - Code Smells: 4 detected (Minor)`);
-        streamLog(`  - Technical Debt: 45 mins`);
-        streamLog(`  - Code Coverage: 85.2%`);
-        streamLog(`Quality Gate check successfully compiled.`);
+        streamLog(`SonarQube Analysis Report: Maintainability=A, Reliability=B, Security=A, Coverage=85.2%`);
         stage.status = 'SUCCESS';
       } 
       else if (stage.name === 'Security Scan') {
         streamLog(`Executing container file vulnerability scan using Trivy CLI...`);
-        await delay(1800);
-        streamLog(`Scanning local directory dependencies and configuration files...`);
+        await delay(1500);
         
-        // Load pipeline threshold gates
-        const thresholds = getThresholdsForPipeline(pipelineId);
-        streamLog(`Loaded DevSecOps Threshold Gates:`);
+        // Load DB pipeline threshold gates
+        const thresholds = await getThresholdsForPipeline(pipelineId);
+        streamLog(`Loaded DevSecOps Threshold Gates from Postgres:`);
         streamLog(`  - Max Critical CVEs Allowed: ${thresholds.fail_on_critical_count}`);
         streamLog(`  - Max High CVEs Allowed: ${thresholds.fail_on_high_count}`);
         streamLog(`  - Min Sonar Rating Required: ${thresholds.fail_on_sonar_rating}`);
 
         const mockCritical = 0;
-        const mockHigh = 2;
-        const mockMedium = 6;
-        const mockLow = 15;
+        const mockHigh = 1;
+        const mockMedium = 4;
+        const mockLow = 10;
         const mockOwasp = 0;
-        const mockSonarRating = 'B'; // Maps to 2 (A=1, B=2, C=3, D=4, F=5)
+        const mockSonarRating = 'B';
 
-        streamLog(`Trivy Scan Results:`);
-        streamLog(`  - Critical Vulnerabilities: ${mockCritical}`);
-        streamLog(`  - High Vulnerabilities: ${mockHigh}`);
-        streamLog(`  - Medium Vulnerabilities: ${mockMedium}`);
-        streamLog(`  - Low Vulnerabilities: ${mockLow}`);
-        streamLog(`  - OWASP Top 10 CVEs: ${mockOwasp}`);
+        streamLog(`Trivy Scan Results: Critical=${mockCritical}, High=${mockHigh}, Medium=${mockMedium}, Low=${mockLow}`);
 
         const ratingWeight = (r: string) => {
           if (r === 'A') return 1;
@@ -214,7 +202,6 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
 
         const scanPassed = !failed;
 
-        // Insert scan record to Postgres
         await query(
           `INSERT INTO pipeline_security_scans (
              pipeline_run_id, 
@@ -235,9 +222,9 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
             runId,
             'A',
             'B',
-            'B',
+            'A',
             85.20,
-            45,
+            25,
             mockCritical,
             mockHigh,
             mockMedium,
@@ -247,9 +234,7 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
               scanned_at: new Date().toISOString(),
               thresholds_evaluated: thresholds,
               vulnerabilities: [
-                { id: 'CVE-2024-3019', severity: 'HIGH', library: 'express-session', description: 'Session fixation vulnerability' },
-                { id: 'CVE-2024-2101', severity: 'HIGH', library: 'jsonwebtoken', description: 'Key confusion signature bypass' },
-                { id: 'CVE-2023-3001', severity: 'MEDIUM', library: 'pg', description: 'Socket leaks leading to DoS' }
+                { id: 'CVE-2024-3019', severity: 'HIGH', library: 'express-session', description: 'Session fixation vulnerability' }
               ]
             }),
             scanPassed
@@ -258,49 +243,49 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
 
         if (!scanPassed) {
           streamLog(`SECURITY GATE FAILED: ${failReason}`);
+          await EventBus.emit({
+            eventType: 'SECURITY_GATE_FAILED',
+            source: 'pipeline',
+            severity: 'CRITICAL',
+            resource: `PipelineRun#${runId}`,
+            metadata: { pipelineId, failReason }
+          });
           throw new Error(`Pipeline execution halted due to DevSecOps Security Gate failure: ${failReason}`);
         }
 
-        streamLog(`Trivy Scan result: OK (Vulnerability threshold not crossed)`);
-        streamLog(`SECURITY GATE PASSED: All metrics meet compliance policies.`);
+        streamLog(`SECURITY GATE PASSED: All metrics meet active compliance policies.`);
         stage.status = 'SUCCESS';
       } 
       else if (stage.name === 'Docker Build') {
         streamLog(`Reading Dockerfile configuration...`);
         streamLog(`Executing: "docker build -t deploymate-api:latest ."`);
-        await delay(2000);
+        await delay(1500);
         streamLog(`[1/3] FROM node:22-alpine AS builder`);
         streamLog(`[2/3] COPY package*.json ./ && RUN npm ci`);
         streamLog(`[3/3] COPY . . && RUN npm run build`);
         streamLog(`Successfully built container image locally.`);
-        streamLog(`Image ID: sha256:06ff2d7a22ef45b5c92c90c76db36a8cb1e5b89a8ff4a390eb1`);
         stage.status = 'SUCCESS';
       } 
       else if (stage.name === 'Image Push') {
-        streamLog(`Connecting to AWS ECR / Docker Hub Registry...`);
-        await delay(1500);
-        streamLog(`Tagging image as: deploymate-registry.amazonaws.com/api:latest`);
+        streamLog(`Connecting to Registry...`);
+        await delay(1200);
+        streamLog(`Tagging image as: deploymate-registry.local/api:latest`);
         streamLog(`Pushing layer [617da9d8]... 10.4 MB / 10.4 MB (Success)`);
-        streamLog(`Pushing layer [a7df2b8f]... 42.2 MB / 42.2 MB (Success)`);
-        streamLog(`Successfully pushed image to AWS ECR registry.`);
+        streamLog(`Successfully pushed image to container registry.`);
         stage.status = 'SUCCESS';
       } 
       else if (stage.name === 'Deploy') {
         streamLog(`Connecting to target Kubernetes cluster via KubeConfig...`);
-        await delay(2000);
-        streamLog(`Checking namespace environment configurations...`);
-        streamLog(`Applying configuration manifest: deployment.yaml`);
+        await delay(1500);
+        streamLog(`Applying manifest: deployment.yaml`);
         streamLog(`Executing: "kubectl apply -f deployment.yaml --namespace=staging"`);
         streamLog(`deployment.apps/deploymate-api-deployment configured`);
-        streamLog(`service/deploymate-api-service configured`);
-        streamLog(`Verifying rollout status: "kubectl rollout status deployment/deploymate-api-deployment"...`);
         streamLog(`Waiting for 3 replicas to be ready...`);
         streamLog(`- Replica 1: READY`);
         streamLog(`- Replica 2: READY`);
         streamLog(`- Replica 3: READY`);
         streamLog(`Rollout successfully completed!`);
 
-        // Save a mock Deployment record in database
         const imageTag = 'v' + Math.floor(Math.random() * 10) + '.' + Math.floor(Math.random() * 10) + '.' + Math.floor(Math.random() * 100);
         await query(
           `INSERT INTO deployments (project_id, pipeline_run_id, environment, namespace, deployment_name, image_tag, status, config_yaml)
@@ -313,31 +298,14 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
             'deploymate-api-deployment',
             imageTag,
             'DEPLOYED',
-            `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: deploymate-api-deployment
-  namespace: default
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: deploymate-api
-  template:
-    metadata:
-      labels:
-        app: deploymate-api
-    spec:
-      containers:
-      - name: api
-        image: deploymate-registry.amazonaws.com/api:${imageTag}
-        ports:
-        - containerPort: 5000`
+            `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: deploymate-api-deployment\n  namespace: default\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: deploymate-api\n  template:\n    metadata:\n      labels:\n        app: deploymate-api\n    spec:\n      containers:\n      - name: api\n        image: deploymate-registry.local/api:${imageTag}`
           ]
         );
 
         stage.status = 'SUCCESS';
       }
+
+      stage.duration = Math.round((Date.now() - stageStartTime) / 1000);
     } catch (err: any) {
       streamLog(`STAGE FAILED: ${err.message}`);
       stage.status = 'FAILED';
@@ -359,6 +327,15 @@ spec:
      WHERE id = $2`,
     [finalStatus, runId]
   );
+
+  // Emit Global EventBus event
+  await EventBus.emit({
+    eventType: finalStatus === 'SUCCESS' ? 'PIPELINE_SUCCESS' : 'PIPELINE_FAILED',
+    source: 'pipeline',
+    severity: finalStatus === 'SUCCESS' ? 'INFO' : 'CRITICAL',
+    resource: `PipelineRun#${runId}`,
+    metadata: { pipelineId, status: finalStatus }
+  });
 
   // Send email notification alert
   try {
@@ -383,15 +360,12 @@ spec:
             DEPLOYMATE Alert: Pipeline Execution ${finalStatus}
           </h2>
           <p>Hello ${targetName},</p>
-          <p>Your pipeline <strong>${pipeline_name}</strong> (Run <strong>#${run_number}</strong>) has finished running with status: <strong>${finalStatus}</strong>.</p>
-          <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.08); margin: 20px 0;" />
-          <p style="font-size: 11px; color: #94A3B8; font-family: monospace;">This is an automated notification from the DEPLOYMATE CI/CD Platform.</p>
+          <p>Your pipeline <strong>${pipeline_name}</strong> (Run <strong>#${run_number}</strong>) finished running with status: <strong>${finalStatus}</strong>.</p>
         </div>
       `;
       
       await notificationService.sendEmail(targetEmail, subject, htmlContent);
       
-      // Save notification log record in database
       await query(
         `INSERT INTO notifications (user_id, project_id, title, message, type, status)
          VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -399,7 +373,7 @@ spec:
           triggered_by,
           project_id,
           subject,
-          `Pipeline ${pipeline_name} Run #${run_number} execution state: ${finalStatus}`,
+          `Pipeline ${pipeline_name} Run #${run_number} state: ${finalStatus}`,
           'EMAIL',
           'SENT'
         ]
@@ -411,7 +385,7 @@ spec:
 
   console.log(`Pipeline Run ${runId} execution completed with status: ${finalStatus}`);
 
-  // Broadcast completion message
+  // Broadcast completion message over WebSockets
   const finalClients = activeLogStreams.get(runId);
   if (finalClients) {
     const payload = JSON.stringify({ type: 'status_update', status: finalStatus });

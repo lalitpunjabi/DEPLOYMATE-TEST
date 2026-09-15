@@ -12,6 +12,7 @@ import { Deployments } from './pages/Deployments';
 import { Monitoring } from './pages/Monitoring';
 import { Logs } from './pages/Logs';
 import { AIAssistant } from './pages/AIAssistant';
+import { AuditLogs } from './pages/AuditLogs';
 import { Settings } from './pages/Settings';
 import { GitOps } from './pages/GitOps';
 import { Terraform } from './pages/Terraform';
@@ -49,6 +50,7 @@ const App: React.FC = () => {
               <Route path="monitoring" element={<Monitoring />} />
               <Route path="logs" element={<Logs />} />
               <Route path="ai-assistant" element={<AIAssistant />} />
+              <Route path="audit-logs" element={<AuditLogs />} />
               <Route path="settings" element={<Settings />} />
             </Route>
 
@@ -62,5 +64,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-
-

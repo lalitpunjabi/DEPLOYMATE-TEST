@@ -126,3 +126,21 @@ export async function deleteProject(req: AuthenticatedRequest, res: Response): P
     res.status(500).json({ message: 'Failed to delete project.', error: error.message });
   }
 }
+
+export async function getAuditLogs(_req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const auditRes = await query(
+      `SELECT a.id, a.action, a.resource, a.resource_id, a.details, a.ip_address, a.created_at,
+              u.name as user_name, u.email as user_email
+       FROM audit_logs a
+       LEFT JOIN users u ON a.user_id = u.id
+       ORDER BY a.created_at DESC
+       LIMIT 100`
+    );
+
+    res.status(200).json(auditRes.rows);
+  } catch (error: any) {
+    console.error('Get audit logs error:', error);
+    res.status(500).json({ message: 'Failed to retrieve audit logs.', error: error.message });
+  }
+}

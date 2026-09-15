@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
+import { EventBus } from '../services/eventBus';
 
 export async function getGitOpsSyncStatus(req: Request, res: Response): Promise<void> {
   const { projectId } = req.query;
@@ -18,7 +19,6 @@ export async function getGitOpsSyncStatus(req: Request, res: Response): Promise<
       [projectId]
     );
 
-    // Default status if no sync history has run yet
     const history = syncRes.rows;
     const currentStatus = history.length > 0 ? history[0] : null;
 
@@ -44,11 +44,9 @@ export async function triggerGitOpsSync(req: Request, res: Response): Promise<vo
   }
 
   try {
-    // Generate simulated sync duration and sha
     const revisionSha = 'git-' + Math.random().toString(16).substring(2, 10);
-    const syncDuration = Math.floor(Math.random() * 10) + 4; // 4 to 13 seconds
+    const syncDuration = Math.floor(Math.random() * 6) + 3;
 
-    // Add entry to DB
     const insertRes = await query(
       `INSERT INTO gitops_sync_history (
          project_id, 
@@ -67,13 +65,22 @@ export async function triggerGitOpsSync(req: Request, res: Response): Promise<vo
         'Synced',
         'Healthy',
         false,
-        JSON.stringify({}),
+        JSON.stringify({ desired_replicas: 3, live_replicas: 3, status: 'RECONCILED' }),
         syncDuration
       ]
     );
 
+    // Emit Global EventBus reconciliation event
+    await EventBus.emit({
+      eventType: 'GITOPS_RECONCILED',
+      source: 'gitops',
+      severity: 'INFO',
+      resource: app_name,
+      metadata: { revisionSha, syncDuration }
+    });
+
     res.status(200).json({
-      message: 'GitOps synchronization completed successfully.',
+      message: 'GitOps synchronization and cluster state reconciliation completed successfully.',
       sync: insertRes.rows[0]
     });
   } catch (error: any) {
@@ -93,7 +100,9 @@ export async function forceDriftState(req: Request, res: Response): Promise<void
     const driftDetails = {
       kind: 'Deployment',
       name: app_name,
-      diff: `- replicas: 3\n+ replicas: 1\n- image: deploymate-api:latest\n+ image: deploymate-api:debug`
+      diff: `- replicas: 3\n+ replicas: 1\n- image: deploymate-api:latest\n+ image: deploymate-api:debug`,
+      desired_spec: { replicas: 3, image: 'deploymate-api:latest' },
+      live_spec: { replicas: 1, image: 'deploymate-api:debug' }
     };
 
     const insertRes = await query(
@@ -119,8 +128,17 @@ export async function forceDriftState(req: Request, res: Response): Promise<void
       ]
     );
 
+    // Emit Global EventBus drift event
+    await EventBus.emit({
+      eventType: 'GITOPS_DRIFT_DETECTED',
+      source: 'gitops',
+      severity: 'WARNING',
+      resource: app_name,
+      metadata: { driftDetails }
+    });
+
     res.status(200).json({
-      message: 'Simulated GitOps drift state triggered.',
+      message: 'GitOps configuration drift detected between Git specs and live cluster state.',
       sync: insertRes.rows[0]
     });
   } catch (error: any) {

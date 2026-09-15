@@ -1,100 +1,76 @@
-# DEPLOYMATE React Client Dashboard
+# DEPLOYMATE React Client Console
 ### Frontend SPA Client · React 19 + TypeScript + Vite + Tailwind CSS v4
 
-This directory houses the frontend Single Page Application (SPA) client for **DEPLOYMATE**. It provides a high-fidelity glassmorphic cloud console interface mapping pipeline states, telemetry diagnostics, Loki logs, and cluster topologies.
+This directory houses the single-page application (SPA) client for **DEPLOYMATE**. It provides a high-fidelity glassmorphic cloud operations interface mapping CI/CD pipelines, DevSecOps security reports, Kubernetes topologies, Progressive Delivery controls, GitOps drift visualization, SRE SLO targets, AI co-pilot workspace, and compliance audit logs.
 
 ---
 
 ## 1. Directory Structure
 
-```
+```text
 frontend/
 ├── src/
-│   ├── assets/             # Global graphic assets and images
-│   ├── components/         # Reusable layouts, UI wrappers, and sidebar panels
-│   ├── context/            # AuthContext.tsx managing JWT session authentication
-│   ├── pages/              # Pages mapping to workspace views:
-│   │   ├── AIAssistant.tsx # Splitscreen YAML editor, risk audits, auto-fixes, and chatbot
-│   │   ├── Dashboard.tsx   # System overview stats, telemetry sparklines, health scores
-│   │   ├── Deployments.tsx # Interactive visual topology maps, namespace selections,
-│   │   │                   # Canary weight sliders, and Blue-Green traffic routing controllers
-│   │   ├── GitOps.tsx      # ArgoCD sync timelines, drift diff panels, and sync triggers
-│   │   ├── Terraform.tsx   # AI IaC code compilers, dry-run plan logs, and apply locks
-│   │   ├── SreSLO.tsx      # Availability target progress gauges, incident tickets, SRE postmortems
-│   │   ├── Chaos.tsx       # Chaos experiments scheduler (monkey injectors) & resilience history
-│   │   ├── Login.tsx       # Glassmorphic user login with RBAC selector utilities
-│   │   ├── Logs.tsx        # Loki LogQL query console with colorized terminal outputs
-│   │   ├── Monitoring.tsx  # Dynamic metrics graphs (CPU, RAM, load rates)
-│   │   ├── Pipelines.tsx   # Visual stage pipelines, log terminal streams, and AI audits
-│   │   ├── Projects.tsx    # Workspace project repositories registry
-│   │   ├── Register.tsx    # User registrations portal
-│   │   └── Settings.tsx    # SMTP mailers, DB diagnosticians, webhooks, and developer keys
-│   ├── App.tsx             # Master router mappings and layout shell structures
-│   ├── index.css           # Tailwind v4 import, theme overrides, and custom glass definitions
-│   └── main.tsx            # DOM root bootstrapping
+│   ├── assets/             # Graphic assets and branding media
+│   ├── components/         # Reusable UI components:
+│   │   ├── ApprovalModal.tsx # Human-in-the-Loop AI remediation approval modal
+│   │   ├── CommandPalette.tsx# Ctrl+K / Cmd+K global search palette
+│   │   ├── Layout.tsx      # Workspace layout wrapper shell
+│   │   ├── Navbar.tsx      # Infrastructure Mode toggle, search, and session controls
+│   │   ├── ProtectedRoute.tsx# Auth guard router wrapper
+│   │   ├── Sidebar.tsx     # Platform navigation links
+│   │   └── StatusBadge.tsx # Standardized status indicator badges
+│   ├── context/            # Global context providers:
+│   │   ├── AuthContext.tsx # JWT token & RBAC user session state
+│   │   └── DemoContext.tsx # Centerpiece E2E demonstration sequence manager
+│   ├── pages/              # View pages:
+│   │   ├── AIAssistant.tsx # Splitscreen YAML editor, risk audit, auto-fixes, co-pilot chat
+│   │   ├── AuditLogs.tsx   # Compliance audit stream with search & resource filters
+│   │   ├── Chaos.tsx       # Resilience Lab experiment scheduler & resilience scoring
+│   │   ├── Dashboard.tsx   # E2E centerpiece workflow, cluster gauges, FinOps summary
+│   │   ├── Deployments.tsx # Topology map, Canary split sliders, Blue-Green router swaps
+│   │   ├── GitOps.tsx      # Reconciler timeline, desired-vs-live diff viewer, sync triggers
+│   │   ├── Login.tsx       # Glassmorphic user login
+│   │   ├── Logs.tsx        # Centralized log explorer
+│   │   ├── Monitoring.tsx  # Dynamic metrics graphs (CPU, Memory, Request Rate, Latency)
+│   │   ├── Pipelines.tsx   # Pipeline run streams, stage durations, security reports
+│   │   ├── Projects.tsx    # Project & repository registry
+│   │   ├── Register.tsx    # User registration portal
+│   │   ├── Settings.tsx    # Mailer configs, DB diagnostics, developer settings
+│   │   ├── SreSLO.tsx      # SLI/SLO target progress gauges, incident tickets, AI postmortems
+│   │   └── Terraform.tsx   # AI HCL code generator, dry-run plan logs, apply locks
+│   ├── App.tsx             # Master route definitions
+│   ├── index.css           # Tailwind v4 import, custom theme tokens & glass effects
+│   └── main.tsx            # Application entry point
+├── Dockerfile              # Multi-stage Nginx production container build
 ├── vite.config.ts          # Vite configuration with @tailwindcss/vite plugin
-├── tsconfig.json           # Type checking environments
-└── package.json            # Client packages mapping
+├── tsconfig.json           # TypeScript configuration
+└── package.json            # Dependencies manifest
 ```
 
 ---
 
-## 2. Tailwind CSS v4 & Vite Configuration
+## 2. Key Capabilities & Status Matrix
 
-This project utilizes **Tailwind CSS v4** featuring the native `@tailwindcss/vite` compiler. PostCSS configurations and `tailwind.config.js` have been removed to leverage LightningCSS and compile-time compilation.
-
-* **Vite Plugin:** Loaded in [vite.config.ts](file:///c:/Users/Lalit%20Punjabi/Documents/DEPLOYMATE-TEST/frontend/vite.config.ts):
-  ```typescript
-  import { defineConfig } from 'vite'
-  import react from '@vitejs/plugin-react'
-  import tailwindcss from '@tailwindcss/vite'
-
-  export default defineConfig({
-    plugins: [
-      react(),
-      tailwindcss(),
-    ],
-  })
-  ```
-* **Theme Styling Overrides:** Maintained inside [src/index.css](file:///c:/Users/Lalit%20Punjabi/Documents/DEPLOYMATE-TEST/frontend/src/index.css) using standard CSS custom properties:
-  ```css
-  @import "tailwindcss";
-
-  @theme {
-    --color-background: #0B0F19;
-    --color-panel: #131A2C;
-    --color-border: rgba(255, 255, 255, 0.08);
-    --color-primary: #6366F1;
-    --color-secondary: #06B6D4;
-    --shadow-glow: 0 0 15px rgba(99, 102, 241, 0.15);
-  }
-  ```
+- **Infrastructure Mode Switcher (`Navbar.tsx`)**: Toggle between `REAL CLUSTER` (Kubernetes API connection) and `SIMULATION MODE`. `[Implemented]`
+- **Human-in-the-Loop Security Approval (`ApprovalModal.tsx`)**: Interactive approval modal requiring operator authorization before executing high-risk AI remediations. `[Implemented]`
+- **Compliance Audit Log Stream (`AuditLogs.tsx`)**: Operational log viewer with real-time text search and resource category filters (`INFRASTRUCTURE`, `DEPLOYMENT`, `AIOps`, `SECURITY`). `[Implemented]`
+- **Progressive Delivery Controls (`Deployments.tsx`)**: Interactive Canary traffic split sliders (10% → 100%) and Blue-Green router color swap toggles. `[Implemented]`
+- **Global Search Command Palette (`CommandPalette.tsx`)**: Keyboard-driven (Ctrl+K / Cmd+K) search indexing projects, pods, pipelines, incidents, and terraform states. `[Implemented]`
 
 ---
 
-## 3. Advanced Features Walkthrough
+## 3. Development Commands
 
-1. **Interactive Namespace Graph & Progressive Delivery (Deployments tab):** Displays logical tree hierarchies linking Ingresses, Deployments, and Pods. Supports direct rollback commands, container log audits, dynamic Canary traffic-split allocation percentage sliders, and instant active Blue-Green color backend router toggles.
-2. **Declarative GitOps Timelines (GitOps tab):** Renders visual sync progress bars mapping source changes to active cluster pods. Includes drift difference monitors demonstrating YAML parameter differences (e.g. replica configurations) in diff formats.
-3. **AI Terraform Workspace (Terraform tab):** Generates cloud templates on instructions, checks init outputs via dry-run plans, and displays apply lock status indicators during execution.
-4. **SRE Health Meters & Incident Center (SRE tab):** Visual progress gauges computing consumed error budgets for availability and latency metrics. Supports ticket reporting, automatic pod-killing anomalies healing, and AI postmortem compilations.
-5. **Chaos Monkey (Chaos tab):** Triggers simulated faults inside namespaces, monitors SLO targets under stress, and scores the resilience recovery percentage.
-6. **AI Diagnostics & Copilot (AI Diagnostics tab):** Leverages live `gemini-3.5-flash` model integrations to perform structured static analysis scans on Kubernetes manifests, highlights line-by-line security and availability risks, allows one-click auto-remediations directly inside the YAML editor, and provides an interactive SRE co-pilot chatbot.
+From inside `frontend/`:
 
----
-
-## 4. Build & Development Commands
-
-From inside the `frontend/` folder:
-
-* **Start Development Mode:**
+* **Start Development Server**:
   ```bash
   npm run dev
   ```
-  Runs the local client on `http://localhost:5173/` with HMR active.
+  Launches Vite dev server on `http://localhost:5173/` with HMR active.
 
-* **Compile & Bundle checking:**
+* **TypeScript Check & Production Build**:
   ```bash
   npm run build
   ```
-  Executes type compilation `tsc -b` and Rolldown bundling `vite build`. Outputs are generated inside `dist/`.
+  Runs `tsc -b && vite build`. Output bundle is generated in `dist/`.

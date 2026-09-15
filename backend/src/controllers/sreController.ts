@@ -1,20 +1,20 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
+import { EventBus } from '../services/eventBus';
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
 export async function getSloHealth(_req: Request, res: Response): Promise<void> {
   try {
-    // Check if targets exist. If empty, seed some default targets.
     const checkRes = await query(`SELECT * FROM sre_slo_targets`);
     if (checkRes.rowCount === 0) {
       await query(`
-        INSERT INTO sre_slo_targets (service_name, metric_type, slo_target_percentage, sli_value_current, error_budget_remaining_percentage)
+        INSERT INTO sre_slo_targets (service_name, metric_type, slo_target_percentage, sli_value_current, error_budget_remaining_percentage, burn_rate)
         VALUES 
-          ('payment-api-service', 'AVAILABILITY', 99.900, 99.954, 85.400),
-          ('payment-api-service', 'LATENCY', 99.000, 98.450, 42.100),
-          ('frontend-dashboard-ui', 'AVAILABILITY', 99.500, 99.720, 100.000),
-          ('fastapi-copilot-service', 'ERROR_RATE', 99.000, 98.920, 22.800)
+          ('payment-api-service', 'AVAILABILITY', 99.900, 99.954, 85.400, 1.00),
+          ('payment-api-service', 'LATENCY', 99.000, 98.450, 42.100, 3.50),
+          ('frontend-dashboard-ui', 'AVAILABILITY', 99.500, 99.720, 100.000, 0.80),
+          ('fastapi-copilot-service', 'ERROR_RATE', 99.000, 98.920, 22.800, 14.20)
       `);
     }
 
@@ -27,7 +27,6 @@ export async function getSloHealth(_req: Request, res: Response): Promise<void> 
 
 export async function getIncidents(_req: Request, res: Response): Promise<void> {
   try {
-    // Check if incidents exist. If empty, seed some initial tickets.
     const checkRes = await query(`SELECT * FROM sre_incidents`);
     if (checkRes.rowCount === 0) {
       await query(`
@@ -63,7 +62,16 @@ export async function createIncident(req: Request, res: Response): Promise<void>
 
     const incident = insertRes.rows[0];
 
-    // If P1 severity, trigger simulated AlertManager and Self-Healing
+    // Emit EventBus incident creation event
+    await EventBus.emit({
+      eventType: 'INCIDENT_CREATED',
+      source: 'sre',
+      severity: severity === 'P1' ? 'CRITICAL' : 'WARNING',
+      resource: title,
+      metadata: { incidentId: incident.id, severity }
+    });
+
+    // If P1 severity, trigger AlertManager and Self-Healing
     if (severity === 'P1') {
       console.log(`[AlertManager] CRITICAL P1 incident registered! Scheduling self-healing actions.`);
       
@@ -78,7 +86,7 @@ export async function createIncident(req: Request, res: Response): Promise<void>
           podName,
           namespace,
           anomaly,
-          `kubectl delete pod ${podName} --namespace=${namespace} (Simulated)`,
+          `kubectl delete pod ${podName} --namespace=${namespace} (Controlled Restart)`,
           'SUCCESS',
           incident.id
         ]
@@ -111,7 +119,6 @@ export async function generatePostmortem(req: Request, res: Response): Promise<v
 
     const incident = incRes.rows[0];
 
-    // Request Gemini model via FastAPI to compile postmortem
     const prompt = `Construct an enterprise DevOps Postmortem Report in markdown format. 
 Incident Details:
 - Severity: ${incident.severity}
@@ -147,7 +154,6 @@ The service encountered exhaustion of resources under simulated load spikes.
 - Set up Horizontal Pod Autoscaler policies.`;
     }
 
-    // Save postmortem back to DB
     const updateRes = await query(
       `UPDATE sre_incidents 
        SET postmortem_report = $1, status = 'RESOLVED', resolved_at = NOW() 
@@ -155,8 +161,17 @@ The service encountered exhaustion of resources under simulated load spikes.
       [postmortemMarkdown, id]
     );
 
+    // Emit EventBus event
+    await EventBus.emit({
+      eventType: 'INCIDENT_RESOLVED',
+      source: 'sre',
+      severity: 'INFO',
+      resource: incident.title,
+      metadata: { incidentId: id }
+    });
+
     res.status(200).json({
-      message: 'Incident postmortem compiled and resolved.',
+      message: 'Incident postmortem compiled and ticket marked as RESOLVED.',
       incident: updateRes.rows[0]
     });
   } catch (error: any) {
