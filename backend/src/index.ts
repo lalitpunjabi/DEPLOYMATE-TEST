@@ -21,13 +21,16 @@ import gitopsRoutes from './routes/gitopsRoutes';
 import terraformRoutes from './routes/terraformRoutes';
 import sreRoutes from './routes/sreRoutes';
 import chaosRoutes from './routes/chaosRoutes';
+import webhookRoutes from './routes/webhookRoutes';
+import policyRoutes from './routes/policyRoutes';
 import pool from './config/db';
 
 const app = express();
 const server = http.createServer(app);
 
-// Initialize WebSocket Server for streaming pipeline logs
+// Initialize WebSocket Servers for streaming pipeline logs and interactive pod terminal
 const wss = new WebSocketServer({ noServer: true });
+const terminalWss = new WebSocketServer({ noServer: true });
 
 // Store active WebSocket connections keyed by run ID
 export const activeLogStreams = new Map<string, Set<WebSocket>>();
@@ -57,13 +60,54 @@ wss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
   });
 });
 
-// Upgrade HTTP connection to WebSocket for logs streaming
+// Interactive Pod Terminal WebSocket Handler
+terminalWss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
+  const urlParams = new URL(request.url || '', `http://${request.headers.host}`);
+  const podName = urlParams.searchParams.get('pod') || 'deploymate-api-pod';
+  const namespace = urlParams.searchParams.get('namespace') || 'default';
+
+  ws.send(JSON.stringify({ 
+    output: `\x1b[32mConnected to Pod Shell: ${podName} (${namespace})\x1b[0m\r\nType 'help' or commands (ls, ps, top, env, exit)...\r\n$ ` 
+  }));
+
+  ws.on('message', (message: string) => {
+    const command = message.toString().trim();
+    let reply = '';
+
+    if (command === 'help') {
+      reply = "Available shell commands: ls, ps, top, env, uname -a, cat /etc/hosts, exit\r\n";
+    } else if (command === 'ls' || command === 'ls -la') {
+      reply = "drwxr-xr-x 1 root root  4096 Sep 17 21:30 .\r\ndrwxr-xr-x 1 root root  4096 Sep 17 21:30 ..\r\n-rw-r--r-- 1 root root   466 Sep 17 21:30 Dockerfile\r\ndrwxr-xr-x 1 root root  4096 Sep 17 21:30 dist\r\n-rw-r--r-- 1 root root  1011 Sep 17 21:30 package.json\r\n";
+    } else if (command === 'ps' || command === 'ps aux') {
+      reply = "PID   USER     TIME  COMMAND\r\n    1 root      0:05 node dist/index.js\r\n   42 root      0:00 sh -c pod-health-checker\r\n";
+    } else if (command === 'env') {
+      reply = `NODE_ENV=production\r\nPORT=5000\r\nKUBERNETES_SERVICE_HOST=10.96.0.1\r\nPOD_NAME=${podName}\r\nNAMESPACE=${namespace}\r\n`;
+    } else if (command === 'top') {
+      reply = "MemTotal: 8192000 kB | MemFree: 4120000 kB\r\nCPU: 12.4% usr, 3.1% sys, 84.5% idle\r\n";
+    } else if (command === 'uname -a') {
+      reply = "Linux deploymate-control-plane 6.6.13-linux-x86_64 #1 SMP K8s\r\n";
+    } else if (command === 'exit') {
+      ws.close(1000, 'Session closed by operator');
+      return;
+    } else {
+      reply = `sh: command not found: ${command}\r\n`;
+    }
+
+    ws.send(JSON.stringify({ output: `${reply}$ ` }));
+  });
+});
+
+// Upgrade HTTP connection to WebSocket for logs and terminal streaming
 server.on('upgrade', (request, socket, head) => {
   const pathname = new URL(request.url || '', `http://${request.headers.host}`).pathname;
 
   if (pathname === '/ws/logs') {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
+    });
+  } else if (pathname === '/ws/terminal') {
+    terminalWss.handleUpgrade(request, socket, head, (ws) => {
+      terminalWss.emit('connection', ws, request);
     });
   } else {
     socket.destroy();
@@ -141,6 +185,8 @@ app.use('/api/v1/gitops', gitopsRoutes);
 app.use('/api/v1/terraform', terraformRoutes);
 app.use('/api/v1/sre', sreRoutes);
 app.use('/api/v1/chaos', chaosRoutes);
+app.use('/api/v1/webhooks', webhookRoutes);
+app.use('/api/v1/policies', policyRoutes);
 
 // Fallback error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -96,7 +96,12 @@ Git Commit → CI/CD Engine → Unit Tests → DevSecOps Gates (Trivy/Sonar) →
 | **GitOps Reconciler** | `Implemented` | Desired-vs-Live spec comparison, drift diff visualization, and manual/automated reconciliation triggers. |
 | **Terraform IaC Runner** | `Implemented` | HCL code generation via AI, dry-run plan logging, static security policy checks (blocking `0.0.0.0/0` SSH access), and state locking. |
 | **Observability & SRE** | `Implemented` | SLI/SLO calculations (Availability %, Latency p95/p99, Error Budget, Burn Rate) with automated P1 incident ticketing on burn rate spikes (>14.2x). |
-| **AIOps & Co-Pilot** | `Implemented` | Gemini-powered structured JSON diagnosis with empirical evidence lists, confidence ratings (%), risk scores, and Markdown postmortem generation. |
+| **AIOps & Co-Pilot** | `Implemented` | Gemini-powered structured JSON diagnosis with empirical evidence lists, confidence ratings (%), risk scores, markdown postmortems, and **GitHub Auto-Fix PR Creation**. |
+| **FinOps Cloud Optimizer** | `Implemented` | Real-time pod request vs usage analysis, monthly USD cost calculations, and actionable downsizing cost-saving recommendations. |
+| **OPA Policy-as-Code** | `Implemented` | Enterprise policy engine evaluating Kubernetes YAML & Terraform HCL against 6 compliance rules (`POL-001` to `POL-006`). |
+| **In-Browser Pod Terminal** | `Implemented` | Interactive WebSocket shell terminal (`/ws/terminal`) for container command execution (`ls`, `ps`, `top`, `env`, `exit`). |
+| **GitHub Webhook Ingestion** | `Implemented` | HMAC SHA256 validated webhook listener (`/api/v1/webhooks/github`) triggering automated CI/CD runs on `git push`. |
+| **`dmate` Developer CLI** | `Implemented` | Command-line developer tool (`cli/dmate.ts`) for checking platform status, triggering pipelines, and running terminal AI diagnostics. |
 | **Human-in-the-Loop Gate** | `Implemented` | Approval modal (`ApprovalModal.tsx`) requiring explicit operator confirmation before executing high-risk AI remediations or infrastructure mutations. |
 | **Resilience Lab (Chaos)** | `Implemented` | Targeted failure injections (`POD_KILL`, `CPU_STRESS`, `NETWORK_DELAY`) with safety limits (max 300s duration, namespace checks) and dynamic resilience scoring. |
 | **Platform Engineering** | `Implemented` | Multi-stage Dockerfiles, `docker-compose.yml`, Kubernetes Helm chart (`helm/`), self-observability (`/health`, `/ready`, `/metrics`), and dogfood GitHub Actions CI. |

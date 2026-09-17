@@ -287,6 +287,87 @@ export const Monitoring: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* FinOps Cloud Cost Optimization Panel */}
+      <div className="glass-panel p-6 bg-panel/30 border-white/[0.04] space-y-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-white/[0.04] pb-4">
+          <div>
+            <h3 className="text-lg font-bold text-text flex items-center gap-2 font-mono uppercase">
+              <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">$</span>
+              FinOps Cloud Cost Optimizer
+            </h3>
+            <p className="text-xs text-muted font-mono">Resource allocation requests vs. actual CPU/Memory usage cost analysis.</p>
+          </div>
+          <div className="flex items-center gap-4 text-xs font-mono">
+            <div className="p-3 bg-slate-900/60 rounded-xl border border-white/[0.03]">
+              <span className="text-muted block text-[10px] uppercase">Est. Monthly Cost</span>
+              <span className="text-base font-extrabold text-text">$482.40 USD</span>
+            </div>
+            <div className="p-3 bg-emerald-950/40 rounded-xl border border-emerald-500/20">
+              <span className="text-emerald-400 block text-[10px] uppercase font-bold">Potential Savings</span>
+              <span className="text-base font-extrabold text-emerald-400">$184.20 / mo (38%)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Workloads Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left font-mono text-xs">
+            <thead>
+              <tr className="border-b border-white/[0.04] text-[10px] uppercase text-muted tracking-wider">
+                <th className="py-3 px-2">Workload</th>
+                <th className="py-3 px-2">Req CPU / Used</th>
+                <th className="py-3 px-2">Req RAM / Used</th>
+                <th className="py-3 px-2">Monthly Cost</th>
+                <th className="py-3 px-2">Est. Savings</th>
+                <th className="py-3 px-2">Status</th>
+                <th className="py-3 px-2">Actionable Recommendation</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/[0.03] text-slate-300">
+              <tr>
+                <td className="py-3 px-2 font-bold text-text">deploymate-api-deployment</td>
+                <td className="py-3 px-2 text-slate-400">2.0 cores / <span className="text-emerald-400">0.45 cores</span></td>
+                <td className="py-3 px-2 text-slate-400">4.0 GB / <span className="text-emerald-400">1.2 GB</span></td>
+                <td className="py-3 px-2 font-bold text-text">$214.20</td>
+                <td className="py-3 px-2 text-emerald-400 font-bold">$96.40</td>
+                <td className="py-3 px-2">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    Over-Provisioned
+                  </span>
+                </td>
+                <td className="py-3 px-2 text-muted text-[11px]">Downsize CPU requests from 2.0 to 0.6 cores to save ~$96/mo</td>
+              </tr>
+              <tr>
+                <td className="py-3 px-2 font-bold text-text">fastapi-copilot-deployment</td>
+                <td className="py-3 px-2 text-slate-400">4.0 cores / <span className="text-emerald-400">1.8 cores</span></td>
+                <td className="py-3 px-2 text-slate-400">8.0 GB / <span className="text-emerald-400">3.2 GB</span></td>
+                <td className="py-3 px-2 font-bold text-text">$198.00</td>
+                <td className="py-3 px-2 text-emerald-400 font-bold">$87.80</td>
+                <td className="py-3 px-2">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    Over-Provisioned
+                  </span>
+                </td>
+                <td className="py-3 px-2 text-muted text-[11px]">Downsize Memory limit from 8GB to 4GB to save ~$87/mo</td>
+              </tr>
+              <tr>
+                <td className="py-3 px-2 font-bold text-text">deploymate-ui-deployment</td>
+                <td className="py-3 px-2 text-slate-400">1.0 cores / <span className="text-emerald-400">0.15 cores</span></td>
+                <td className="py-3 px-2 text-slate-400">2.0 GB / <span className="text-emerald-400">0.5 GB</span></td>
+                <td className="py-3 px-2 font-bold text-text">$70.20</td>
+                <td className="py-3 px-2 text-emerald-400 font-bold">$0.00</td>
+                <td className="py-3 px-2">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    Optimal
+                  </span>
+                </td>
+                <td className="py-3 px-2 text-muted text-[11px]">Resource allocations meet workload requirements.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 };

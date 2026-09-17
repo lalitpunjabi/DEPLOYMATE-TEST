@@ -133,14 +133,14 @@ async function init() {
     const superAdminRoleRes = await client.query("SELECT id FROM roles WHERE name = 'Super Admin'");
     const adminRoleId = superAdminRoleRes.rows[0].id;
 
-    const adminEmail = 'admin@deploymate.com';
-    const adminPassword = 'admin123';
+    const adminEmail = process.env.INITIAL_ADMIN_EMAIL || 'admin@deploymate.com';
+    const adminPassword = process.env.INITIAL_ADMIN_PASSWORD || 'admin123';
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(adminPassword, salt);
 
     const userCheck = await client.query("SELECT 1 FROM users WHERE email = $1", [adminEmail]);
     if (userCheck.rowCount === 0) {
-      console.log('Seeding default Super Admin user (admin@deploymate.com / admin123)...');
+      console.log(`Seeding default Super Admin user (${adminEmail})...`);
       await client.query(
         `INSERT INTO users (name, email, password_hash, role_id) 
          VALUES ($1, $2, $3, $4)`,

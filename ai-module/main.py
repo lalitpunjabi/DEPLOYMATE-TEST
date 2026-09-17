@@ -61,12 +61,6 @@ class PodTroubleshootInput(BaseModel):
     logs: str
     events: str
 
-class CostOptimizerInput(BaseModel):
-    service_name: str
-    cpu_usage_cores: float
-    memory_usage_gb: float
-    replicas: int
-
 
 # --- Helper ---
 def ask_gemini(prompt: str, system_instruction: Optional[str] = None, response_json: bool = False) -> str:

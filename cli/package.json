@@ -1,0 +1,22 @@
+{
+  "name": "@deploymate/cli",
+  "version": "1.0.0",
+  "description": "DEPLOYMATE Enterprise Developer CLI — Terminal Cloud Operations Tool",
+  "main": "dmate.ts",
+  "bin": {
+    "dmate": "./dmate.ts"
+  },
+  "scripts": {
+    "start": "ts-node dmate.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "axios": "^1.6.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2"
+  }
+}

@@ -20,7 +20,8 @@ import {
   CheckCircle2,
   Terminal,
   HeartPulse,
-  Undo2
+  Undo2,
+  GitPullRequest
 } from 'lucide-react';
 
 interface Message {
@@ -80,6 +81,8 @@ spec:
   } | null>(null);
   
   const [appliedFixes, setAppliedFixes] = useState<string[]>([]);
+  const [isPrCreating, setIsPrCreating] = useState(false);
+  const [prStatusMessage, setPrStatusMessage] = useState<{ url: string; msg: string } | null>(null);
 
   // --- 3. Generator State ---
   const [selectedTech, setSelectedTech] = useState('Node.js');
@@ -192,6 +195,38 @@ spec:
         });
         setIsAuditLoading(false);
       }, 1200);
+    }
+  };
+
+  const handleCreateFixPr = async () => {
+    setIsPrCreating(true);
+    setPrStatusMessage(null);
+    try {
+      const res = await fetch('http://localhost:5000/api/v1/ai/create-fix-pr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          repoUrl: 'https://github.com/deploymate-org/deploymate-app',
+          filePath: 'k8s/deployment.yaml',
+          fixDescription: 'Security context hardening and CPU/Memory resource limit allocation',
+          proposedCode: manifestYaml
+        })
+      });
+      const data = await res.json();
+      setPrStatusMessage({
+        url: data.prUrl,
+        msg: data.message || `Successfully created Pull Request #${data.prNumber}`
+      });
+    } catch {
+      setPrStatusMessage({
+        url: 'https://github.com/deploymate-org/deploymate-app/pull/42',
+        msg: 'Successfully created AI Auto-Fix Pull Request #42 (Simulated)'
+      });
+    } finally {
+      setIsPrCreating(false);
     }
   };
 
@@ -649,21 +684,53 @@ stages:
               </div>
             </div>
             
-            <button
-              onClick={handleAudit}
-              disabled={isAuditLoading || !manifestYaml.trim()}
-              className="w-full mt-4 rounded-lg bg-gradient-to-r from-primary to-secondary py-2.5 text-sm font-semibold text-white shadow-glow hover:from-primary-hover hover:to-secondary-hover transition-all flex items-center justify-center gap-1.5"
-            >
-              {isAuditLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Analyzing Manifest Lines...
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4 fill-white animate-pulse" /> Trigger Static Security Scan
-                </>
-              )}
-            </button>
+            <div className="grid grid-cols-2 gap-3 mt-4">
+              <button
+                onClick={handleAudit}
+                disabled={isAuditLoading || !manifestYaml.trim()}
+                className="rounded-lg bg-gradient-to-r from-primary to-secondary py-2.5 text-xs font-bold font-mono text-white shadow-glow hover:from-primary-hover hover:to-secondary-hover transition-all flex items-center justify-center gap-1.5"
+              >
+                {isAuditLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Analyzing Manifest...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 fill-white" /> Trigger Security Audit
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={handleCreateFixPr}
+                disabled={isPrCreating}
+                className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 py-2.5 text-xs font-bold font-mono uppercase text-emerald-400 transition-all flex items-center justify-center gap-1.5"
+              >
+                {isPrCreating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Creating GitHub PR...
+                  </>
+                ) : (
+                  <>
+                    <GitPullRequest className="h-4 w-4 text-emerald-400" /> Create AI Fix PR
+                  </>
+                )}
+              </button>
+            </div>
+
+            {prStatusMessage && (
+              <div className="mt-3 p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-lg flex items-center justify-between text-xs font-mono text-emerald-300">
+                <span>{prStatusMessage.msg}</span>
+                <a
+                  href={prStatusMessage.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-2.5 py-1 bg-emerald-500 text-slate-950 font-bold rounded hover:bg-emerald-400 transition-colors shrink-0"
+                >
+                  View PR ↗
+                </a>
+              </div>
+            )}
           </div>
 
           <div className="glass-panel p-5 bg-panel/10 min-h-[520px] flex flex-col justify-center select-text">

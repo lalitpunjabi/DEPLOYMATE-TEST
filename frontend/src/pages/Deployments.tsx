@@ -85,6 +85,12 @@ export const Deployments: React.FC = () => {
   const [inspectorLogs, setInspectorLogs] = useState<string[]>([]);
   const [hoveredNode, setHoveredNode] = useState<{ type: 'service' | 'deployment' | 'pod'; name: string } | null>(null);
 
+  // Terminal Modal State
+  const [activeTerminalPod, setActiveTerminalPod] = useState<Pod | null>(null);
+  const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
+  const [terminalInput, setTerminalInput] = useState<string>('');
+  const [termWs, setTermWs] = useState<WebSocket | null>(null);
+
   // Fetch Namespaces
   const fetchNamespaces = async () => {
     try {
@@ -284,6 +290,47 @@ export const Deployments: React.FC = () => {
         network: '0.12 MB/s'
       } : null);
     }, 2000);
+  };
+
+  const handleOpenTerminal = (pod: Pod) => {
+    setActiveTerminalPod(pod);
+    setTerminalLogs([`Connecting to pod shell terminal: ${pod.name}...`]);
+
+    try {
+      const ws = new WebSocket(`ws://localhost:5000/ws/terminal?pod=${pod.name}&namespace=${pod.namespace}`);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.output) {
+            setTerminalLogs(prev => [...prev, data.output]);
+          }
+        } catch {
+          setTerminalLogs(prev => [...prev, event.data]);
+        }
+      };
+      ws.onclose = () => {
+        setTerminalLogs(prev => [...prev, '\r\n[Terminal session disconnected]']);
+      };
+      setTermWs(ws);
+    } catch {
+      setTerminalLogs(prev => [...prev, 'Failed to establish WebSocket terminal connection.']);
+    }
+  };
+
+  const handleCloseTerminal = () => {
+    if (termWs) {
+      termWs.close();
+      setTermWs(null);
+    }
+    setActiveTerminalPod(null);
+  };
+
+  const handleSendTerminalCommand = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!terminalInput.trim() || !termWs) return;
+    setTerminalLogs(prev => [...prev, `$ ${terminalInput}`]);
+    termWs.send(terminalInput);
+    setTerminalInput('');
   };
 
   const handleRollback = async (deploymentName: string) => {
@@ -682,21 +729,30 @@ export const Deployments: React.FC = () => {
                 {/* Action controls */}
                 <div className="pt-4 border-t border-white/[0.03] space-y-2 select-none">
                   {user?.role !== 'Viewer' && (
-                    <button
-                      onClick={handleRestartPod}
-                      disabled={isRestartingPod}
-                      className="w-full rounded bg-danger/10 border border-danger/30 hover:bg-danger/15 py-2 text-[10px] font-bold font-mono uppercase text-danger flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40"
-                    >
-                      {isRestartingPod ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Killing Process...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="h-3.5 w-3.5" /> Force Terminate
-                        </>
-                      )}
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => selectedPodInspector && handleOpenTerminal(selectedPodInspector)}
+                        className="rounded bg-primary/10 border border-primary/30 hover:bg-primary/20 py-2 text-[10px] font-bold font-mono uppercase text-primary flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        <Terminal className="h-3.5 w-3.5" /> Launch Pod Shell
+                      </button>
+
+                      <button
+                        onClick={handleRestartPod}
+                        disabled={isRestartingPod}
+                        className="rounded bg-danger/10 border border-danger/30 hover:bg-danger/15 py-2 text-[10px] font-bold font-mono uppercase text-danger flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40"
+                      >
+                        {isRestartingPod ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Restarting...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5" /> Force Terminate
+                          </>
+                        )}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -967,6 +1023,64 @@ export const Deployments: React.FC = () => {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* INTERACTIVE POD TERMINAL MODAL */}
+      {activeTerminalPod && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-4xl bg-[#080B13] border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[520px]">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-[#0A0E1A] border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex gap-1.5">
+                  <div className="w-3 h-3 rounded-full bg-red-500/80 cursor-pointer" onClick={handleCloseTerminal} />
+                  <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-green-500/80" />
+                </div>
+                <div className="flex items-center gap-2 pl-2 border-l border-white/10">
+                  <Terminal className="h-4 w-4 text-emerald-400" />
+                  <span className="font-mono text-xs font-bold text-slate-200">
+                    kubectl exec -it {activeTerminalPod.name} -n {activeTerminalPod.namespace} -- /bin/sh
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={handleCloseTerminal}
+                className="text-slate-400 hover:text-white font-mono text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10"
+              >
+                ESC / Close
+              </button>
+            </div>
+
+            {/* Terminal Body */}
+            <div className="flex-1 p-6 font-mono text-xs bg-[#05070E] text-slate-300 overflow-y-auto space-y-1">
+              {terminalLogs.map((logLine, idx) => (
+                <div key={idx} className="whitespace-pre-wrap leading-relaxed">
+                  {logLine}
+                </div>
+              ))}
+            </div>
+
+            {/* Terminal Input Form */}
+            <form onSubmit={handleSendTerminalCommand} className="p-3 bg-[#0A0E1A] border-t border-white/10 flex items-center gap-3">
+              <span className="text-emerald-400 font-mono text-xs pl-3">$</span>
+              <input
+                type="text"
+                value={terminalInput}
+                onChange={(e) => setTerminalInput(e.target.value)}
+                placeholder="Type command (e.g. ls, ps, top, env, help)..."
+                className="flex-1 bg-transparent border-none text-xs font-mono text-white focus:outline-none placeholder:text-slate-600"
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="px-4 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded font-mono text-xs font-bold uppercase transition-colors"
+              >
+                Send
+              </button>
+            </form>
           </div>
         </div>
       )}
