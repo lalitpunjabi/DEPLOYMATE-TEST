@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Navbar } from './Navbar';
 import { CommandPalette } from './CommandPalette';
+import { AiFloatingDrawer } from './AiFloatingDrawer';
 
 export const Layout: React.FC = () => {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
@@ -39,6 +40,9 @@ export const Layout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+
+      {/* Floating AI Assistant Drawer */}
+      <AiFloatingDrawer />
 
       {/* Raycast command palette overlay */}
       <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} />

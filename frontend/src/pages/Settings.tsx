@@ -15,11 +15,16 @@ import {
   Check, 
   Server,
   ShieldCheck,
-  Activity
+  Activity,
+  Palette
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
+import { useToast } from '../context/ToastContext';
 
 export const Settings: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'smtp' | 'ai' | 'db' | 'webhooks' | 'api-keys'>('smtp');
+  const { theme, setTheme } = useTheme();
+  const { showToast } = useToast();
+  const [activeTab, setActiveTab] = useState<'smtp' | 'ai' | 'db' | 'webhooks' | 'api-keys' | 'theme'>('theme');
 
   // SMTP Settings State
   const [smtpHost, setSmtpHost] = useState('smtp.gmail.com');
@@ -223,6 +228,15 @@ export const Settings: React.FC = () => {
             Outbound Webhooks
           </button>
           <button
+            onClick={() => setActiveTab('theme')}
+            className={`flex items-center gap-2.5 rounded-lg px-4 py-2.5 text-sm font-semibold text-left transition-all ${
+              activeTab === 'theme' ? 'bg-primary text-white shadow-glow' : 'text-muted hover:text-text hover:bg-slate-800/40'
+            }`}
+          >
+            <Palette className="h-4.5 w-4.5" />
+            Glassmorphic Theme Engine
+          </button>
+          <button
             onClick={() => setActiveTab('api-keys')}
             className={`flex items-center gap-2.5 rounded-lg px-4 py-2.5 text-sm font-semibold text-left transition-all ${
               activeTab === 'api-keys' ? 'bg-primary text-white shadow-glow' : 'text-muted hover:text-text hover:bg-slate-800/40'
@@ -235,6 +249,115 @@ export const Settings: React.FC = () => {
 
         {/* Right Settings Panel */}
         <div className="lg:col-span-3 space-y-6">
+          {/* THEME ENGINE SETTINGS */}
+          {activeTab === 'theme' && (
+            <div className="glass-panel p-6 bg-panel/30 space-y-6">
+              <div>
+                <h3 className="text-base font-semibold text-text flex items-center gap-2 font-mono uppercase">
+                  <Palette className="h-5 w-5 text-primary" /> Glassmorphic Theme Engine
+                </h3>
+                <p className="text-xs text-muted mt-1">Select your preferred color palette and visual styling theme.</p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                {/* Theme 1: Obsidian */}
+                <div
+                  onClick={() => {
+                    setTheme('obsidian');
+                    showToast('Theme Updated', 'Activated Obsidian Glass (Default Dark) palette', 'success');
+                  }}
+                  className={`p-5 rounded-xl border cursor-pointer transition-all ${
+                    theme === 'obsidian'
+                      ? 'border-primary bg-primary/10 shadow-glow'
+                      : 'border-white/[0.04] bg-slate-900/40 hover:border-primary/40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="font-mono text-xs font-bold text-white uppercase">Obsidian Glass</span>
+                    {theme === 'obsidian' && <span className="text-[9px] bg-primary/20 text-primary-light px-2 py-0.5 rounded font-mono font-bold">Active</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="h-6 w-6 rounded-full bg-[#080B13] border border-white/10" />
+                    <div className="h-6 w-6 rounded-full bg-[#6366F1]" />
+                    <div className="h-6 w-6 rounded-full bg-[#06B6D4]" />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-3 font-mono">Ultra-sleek dark violet & cyan glass aesthetics.</p>
+                </div>
+
+                {/* Theme 2: Cyberpunk */}
+                <div
+                  onClick={() => {
+                    setTheme('cyberpunk');
+                    showToast('Theme Updated', 'Activated Cyberpunk Neon palette', 'success');
+                  }}
+                  className={`p-5 rounded-xl border cursor-pointer transition-all ${
+                    theme === 'cyberpunk'
+                      ? 'border-pink-500 bg-pink-500/10 shadow-glow'
+                      : 'border-white/[0.04] bg-slate-900/40 hover:border-pink-500/40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="font-mono text-xs font-bold text-white uppercase">Cyberpunk Neon</span>
+                    {theme === 'cyberpunk' && <span className="text-[9px] bg-pink-500/20 text-pink-300 px-2 py-0.5 rounded font-mono font-bold">Active</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="h-6 w-6 rounded-full bg-[#12041C] border border-white/10" />
+                    <div className="h-6 w-6 rounded-full bg-[#EC4899]" />
+                    <div className="h-6 w-6 rounded-full bg-[#8B5CF6]" />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-3 font-mono">High-contrast magenta & purple neon styling.</p>
+                </div>
+
+                {/* Theme 3: Emerald */}
+                <div
+                  onClick={() => {
+                    setTheme('emerald');
+                    showToast('Theme Updated', 'Activated Emerald Cyber palette', 'success');
+                  }}
+                  className={`p-5 rounded-xl border cursor-pointer transition-all ${
+                    theme === 'emerald'
+                      ? 'border-emerald-500 bg-emerald-500/10 shadow-glow'
+                      : 'border-white/[0.04] bg-slate-900/40 hover:border-emerald-500/40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="font-mono text-xs font-bold text-white uppercase">Emerald Cyber</span>
+                    {theme === 'emerald' && <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded font-mono font-bold">Active</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="h-6 w-6 rounded-full bg-[#03140C] border border-white/10" />
+                    <div className="h-6 w-6 rounded-full bg-[#10B981]" />
+                    <div className="h-6 w-6 rounded-full bg-[#34D399]" />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-3 font-mono">Matrix-inspired deep emerald SRE dashboard styling.</p>
+                </div>
+
+                {/* Theme 4: Nordic */}
+                <div
+                  onClick={() => {
+                    setTheme('nordic');
+                    showToast('Theme Updated', 'Activated Nordic Slate palette', 'success');
+                  }}
+                  className={`p-5 rounded-xl border cursor-pointer transition-all ${
+                    theme === 'nordic'
+                      ? 'border-sky-400 bg-sky-400/10 shadow-glow'
+                      : 'border-white/[0.04] bg-slate-900/40 hover:border-sky-400/40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="font-mono text-xs font-bold text-white uppercase">Nordic Slate</span>
+                    {theme === 'nordic' && <span className="text-[9px] bg-sky-400/20 text-sky-300 px-2 py-0.5 rounded font-mono font-bold">Active</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="h-6 w-6 rounded-full bg-[#0B1528] border border-white/10" />
+                    <div className="h-6 w-6 rounded-full bg-[#38BDF8]" />
+                    <div className="h-6 w-6 rounded-full bg-[#94A3B8]" />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-3 font-mono">Cool iceberg navy & arctic slate aesthetics.</p>
+                </div>
+              </div>
+            </div>
+          )}
           {/* SMTP SETTINGS */}
           {activeTab === 'smtp' && (
             <div className="glass-panel p-6 bg-panel/30 space-y-6">

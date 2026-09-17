@@ -15,7 +15,9 @@ import {
   CheckCircle2,
   Terminal,
   Activity,
-  Network
+  Network,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip } from 'recharts';
 
@@ -90,6 +92,7 @@ export const Deployments: React.FC = () => {
   const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
   const [terminalInput, setTerminalInput] = useState<string>('');
   const [termWs, setTermWs] = useState<WebSocket | null>(null);
+  const [isFullscreenTopology, setIsFullscreenTopology] = useState(false);
 
   // Fetch Namespaces
   const fetchNamespaces = async () => {
@@ -538,7 +541,28 @@ export const Deployments: React.FC = () => {
         /* INTERACTIVE TOPOLOGY GRAPH */
         <div className="grid gap-6 lg:grid-cols-4 select-none items-start">
           {/* Node Graph Panel */}
-          <div className="glass-panel p-6 bg-[#070B13]/60 border-white/[0.04] shadow-glow relative lg:col-span-3 min-h-[520px] flex flex-col justify-between overflow-x-auto">
+          <div className={`glass-panel p-6 bg-[#070B13]/60 border-white/[0.04] shadow-glow relative lg:col-span-3 min-h-[520px] flex flex-col justify-between overflow-x-auto transition-all ${
+            isFullscreenTopology ? 'fixed inset-4 z-50 bg-[#070B13]/95 border-white/20 backdrop-blur-xl' : ''
+          }`}>
+            <div className="flex items-center justify-between border-b border-white/[0.04] pb-3 mb-2">
+              <span className="text-xs font-bold font-mono text-text uppercase flex items-center gap-2">
+                <Network className="h-4 w-4 text-primary" /> Live Topology Mapping Grid
+              </span>
+              <button
+                onClick={() => setIsFullscreenTopology(!isFullscreenTopology)}
+                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition-colors flex items-center gap-1.5 text-[10px] font-mono"
+              >
+                {isFullscreenTopology ? (
+                  <>
+                    <Minimize2 className="h-3.5 w-3.5" /> Exit Fullscreen
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="h-3.5 w-3.5" /> Expand Fullscreen
+                  </>
+                )}
+              </button>
+            </div>
             
             <div className="text-xs font-mono font-semibold text-muted border-b border-white/[0.03] pb-3 mb-6 flex justify-between">
               <span>Logical Namespace Topology Map</span>
