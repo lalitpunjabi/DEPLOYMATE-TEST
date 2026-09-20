@@ -7,7 +7,7 @@ const SMTP_PASS = process.env.SMTP_PASS || 'mock-pass';
 const FROM_EMAIL = process.env.FROM_EMAIL || 'noreply@deploymate.local';
 
 class NotificationService {
-  private transporter: nodemailer.Transporter | null = null;
+  private transporter: any = null;
 
   constructor() {
     try {
@@ -20,7 +20,7 @@ class NotificationService {
         },
       });
       // Test transporter connection in background
-      this.transporter.verify((err) => {
+      this.transporter.verify((err: any) => {
         if (err) {
           console.warn('NotificationService: SMTP transporter verification failed. Mail alerts will run in simulation log mode.', err.message);
         } else {
