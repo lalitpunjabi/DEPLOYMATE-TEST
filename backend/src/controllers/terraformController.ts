@@ -1,10 +1,12 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
+import { AuthenticatedRequest } from '../middleware/auth';
+import { sendSafeError } from '../utils/securityUtils';
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
-export async function generateTerraformCode(req: Request, res: Response): Promise<void> {
+export async function generateTerraformCode(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { prompt } = req.body;
 
   if (!prompt) {
@@ -20,11 +22,12 @@ export async function generateTerraformCode(req: Request, res: Response): Promis
     });
 
     const data = await aiRes.json();
-    res.status(200).json(data);
+    res.status(200).json(typeof data === 'object' && data !== null ? { ...data, execution_mode: 'SIMULATED' } : { execution_mode: 'SIMULATED', data });
   } catch (error: any) {
-    console.warn('AI Service unreachable, returning fallback mock Terraform configuration.', error);
+    console.warn('AI Service unreachable, returning fallback simulated Terraform configuration.', error);
     res.status(200).json({
-      configuration_code: `# Secure Cloud Provisioning Config
+      execution_mode: 'SIMULATED',
+      configuration_code: `# Secure Cloud Provisioning Config (Simulated)
 provider "aws" {
   region = "us-east-1"
 }
@@ -44,7 +47,7 @@ resource "aws_security_group" "deploymate_sg" {
   }
 }
 
-export async function planTerraform(req: Request, res: Response): Promise<void> {
+export async function planTerraform(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { project_id, stack_name, configuration_code } = req.body;
 
   if (!project_id || !stack_name || !configuration_code) {
@@ -64,13 +67,12 @@ export async function planTerraform(req: Request, res: Response): Promise<void> 
 
     const policyPassed = violations.length === 0;
 
-    const logs = `[terraform init] Initializing Terraform backend database state locks...
-[terraform init] Downloading HashiCorp AWS provider v5.50.0...
-[terraform init] Success! Provider plugins configured.
+    const logs = `[terraform init] Initializing Terraform state locks (SIMULATED)...
+[terraform init] Provider plugins configured.
 [terraform plan] Refreshing state for ${stack_name}...
 [terraform plan] Policy Checks: ${policyPassed ? 'PASSED (0 violations)' : `FAILED (${violations.length} violations)`}
 ${violations.map(v => '[policy error] ' + v).join('\n')}
-[terraform plan] Plan: 1 to add, 0 to change, 0 to destroy.`;
+[terraform plan] Simulated Plan: 1 to add, 0 to change, 0 to destroy.`;
 
     const insertRes = await query(
       `INSERT INTO terraform_states (
@@ -89,7 +91,7 @@ ${violations.map(v => '[policy error] ' + v).join('\n')}
         'PLAN',
         policyPassed ? 'SUCCESS' : 'POLICY_BLOCKED',
         logs,
-        JSON.stringify({ plan: '1 to add, 0 to change, 0 to destroy', policy_passed: policyPassed, violations })
+        JSON.stringify({ plan: '1 to add, 0 to change, 0 to destroy', policy_passed: policyPassed, violations, execution_mode: 'SIMULATED' })
       ]
     );
 
@@ -98,19 +100,20 @@ ${violations.map(v => '[policy error] ' + v).join('\n')}
       source: 'terraform',
       severity: policyPassed ? 'INFO' : 'WARNING',
       resource: stack_name,
-      metadata: { policyPassed, violations }
+      metadata: { policyPassed, violations, execution_mode: 'SIMULATED' }
     });
 
     res.status(200).json({
-      message: policyPassed ? 'Terraform plan executed successfully.' : 'Terraform plan completed with policy violations.',
+      message: policyPassed ? 'Simulated Terraform plan executed successfully.' : 'Simulated Terraform plan completed with policy violations.',
+      execution_mode: 'SIMULATED',
       state: insertRes.rows[0]
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Terraform plan failed.', error: error.message });
+    sendSafeError(res, error, 'Terraform plan failed.');
   }
 }
 
-export async function applyTerraform(req: Request, res: Response): Promise<void> {
+export async function applyTerraform(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { id } = req.body;
 
   if (!id) {
@@ -126,11 +129,10 @@ export async function applyTerraform(req: Request, res: Response): Promise<void>
     }
 
     const state = checkRes.rows[0];
-    const logs = state.logs + `\n[terraform apply] Applying plan details...
-[terraform apply] aws_security_group.${state.stack_name}: Creating...
-[terraform apply] aws_security_group.${state.stack_name}: Still creating... [10s elapsed]
-[terraform apply] aws_security_group.${state.stack_name}: Creation complete [ID: sg-08e1c6b5413ad66bf]
-[terraform apply] Apply complete! Resources: 1 added, 0 changed, 0 destroyed.`;
+    const logs = state.logs + `\n[terraform apply] Applying simulated plan details...
+[terraform apply] aws_security_group.${state.stack_name}: Simulated creation in progress...
+[terraform apply] aws_security_group.${state.stack_name}: Simulated creation complete.
+[terraform apply] Apply complete (SIMULATED MODE).`;
 
     const updateRes = await query(
       `UPDATE terraform_states 
@@ -142,24 +144,25 @@ export async function applyTerraform(req: Request, res: Response): Promise<void>
         logs,
         JSON.stringify({
           applied_at: new Date().toISOString(),
+          execution_mode: 'SIMULATED',
           resources: [
-            { type: 'aws_security_group', name: state.stack_name, id: 'sg-08e1c6b5413ad66bf' }
+            { type: 'aws_security_group', name: state.stack_name, status: 'SIMULATED' }
           ]
         }),
         id
       ]
     );
 
-    // Save audit log
-    if (req.body.user_id) {
+    // Save audit log using authenticated user ID
+    if (req.user?.id) {
       await query(
         `INSERT INTO audit_logs (user_id, action, resource, details)
          VALUES ($1, $2, $3, $4)`,
         [
-          req.body.user_id,
+          req.user.id,
           'TERRAFORM_APPLY',
           'INFRASTRUCTURE',
-          JSON.stringify({ stack_name: state.stack_name, state_id: id })
+          JSON.stringify({ stack_name: state.stack_name, state_id: id, execution_mode: 'SIMULATED' })
         ]
       );
     }
@@ -169,19 +172,20 @@ export async function applyTerraform(req: Request, res: Response): Promise<void>
       source: 'terraform',
       severity: 'INFO',
       resource: state.stack_name,
-      metadata: { stateId: id }
+      metadata: { stateId: id, execution_mode: 'SIMULATED' }
     });
 
     res.status(200).json({
-      message: 'Terraform configuration successfully applied.',
+      message: 'Simulated Terraform configuration applied.',
+      execution_mode: 'SIMULATED',
       state: updateRes.rows[0]
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Terraform apply failed.', error: error.message });
+    sendSafeError(res, error, 'Terraform apply failed.');
   }
 }
 
-export async function getTerraformStates(req: Request, res: Response): Promise<void> {
+export async function getTerraformStates(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { projectId } = req.query;
 
   if (!projectId) {
@@ -198,6 +202,6 @@ export async function getTerraformStates(req: Request, res: Response): Promise<v
     );
     res.status(200).json(listRes.rows);
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve Terraform states.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve Terraform states.');
   }
 }

@@ -3,11 +3,29 @@ import crypto from 'crypto';
 import { query } from '../config/db';
 import { executePipelineRun } from '../services/pipelineEngine';
 import { EventBus } from '../services/eventBus';
+import { sendSafeError } from '../utils/securityUtils';
+
+const processedDeliveryIds = new Set<string>();
 
 export async function handleGitHubWebhook(req: Request, res: Response): Promise<void> {
   const signature = req.headers['x-hub-signature-256'] as string;
   const eventType = (req.headers['x-github-event'] as string) || 'push';
+  const deliveryId = req.headers['x-github-delivery'] as string;
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
+
+  // Webhook Replay Protection using delivery ID
+  if (deliveryId) {
+    if (processedDeliveryIds.has(deliveryId)) {
+      res.status(200).json({ status: 'IGNORED', message: 'Duplicate webhook delivery ID detected.' });
+      return;
+    }
+    processedDeliveryIds.add(deliveryId);
+    // Limit memory footprint of delivery ID cache
+    if (processedDeliveryIds.size > 10000) {
+      const firstItem = processedDeliveryIds.values().next().value;
+      if (firstItem) processedDeliveryIds.delete(firstItem);
+    }
+  }
 
   // Fail closed if webhook secret missing in production
   if (!secret) {
@@ -23,7 +41,8 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
 
     try {
       const hmac = crypto.createHmac('sha256', secret);
-      const digest = 'sha256=' + hmac.update(JSON.stringify(req.body)).digest('hex');
+      const rawPayload = (req as any).rawBody || (typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
+      const digest = 'sha256=' + hmac.update(rawPayload).digest('hex');
 
       const sigBuffer = Buffer.from(signature);
       const digestBuffer = Buffer.from(digest);
@@ -45,6 +64,7 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
   }
 
   const repoUrl = payload.repository.html_url || payload.repository.clone_url || '';
+  const fullName = payload.repository.full_name || '';
   const branch = payload.ref ? payload.ref.replace('refs/heads/', '') : (payload.repository.default_branch || 'main');
   const commitSha = payload.after || (payload.head_commit ? payload.head_commit.id : 'sha-webhook');
   const commitMessage = payload.head_commit ? payload.head_commit.message : `Webhook trigger on event: ${eventType}`;
@@ -53,14 +73,13 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
   console.log(`[WEBHOOK] Received GitHub event "${eventType}" for repository "${repoUrl}" on branch "${branch}"`);
 
   try {
-    // Find project pipeline matching repository URL
+    // Exact deterministic repository matching (No LIMIT 1 fragile matching)
     const repoMatch = await query(
-      `SELECT r.project_id, p.id as pipeline_id, p.name as pipeline_name
+      `SELECT DISTINCT r.project_id, p.id as pipeline_id, p.name as pipeline_name
        FROM repositories r
        JOIN pipelines p ON p.project_id = r.project_id
-       WHERE r.github_repo_url ILIKE $1 OR r.github_repo_url ILIKE $2
-       LIMIT 1`,
-      [`%${payload.repository.full_name}%`, `%${repoUrl}%`]
+       WHERE r.github_repo_url = $1 OR r.github_repo_url = $2 OR r.github_repo_url = $3`,
+      [repoUrl, `https://github.com/${fullName}`, `git@github.com:${fullName}.git`]
     );
 
     if (repoMatch.rowCount === 0) {
@@ -69,6 +88,11 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
         status: 'IGNORED', 
         message: `Webhook received but no registered project found for repo: ${repoUrl}` 
       });
+      return;
+    }
+
+    if (repoMatch.rowCount && repoMatch.rowCount > 1) {
+      res.status(400).json({ message: 'Ambiguous repository mapping: multiple projects match this repository URL.' });
       return;
     }
 
@@ -131,7 +155,6 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
       pipeline_id: pipeline_id
     });
   } catch (err: any) {
-    console.error('[WEBHOOK] Error processing GitHub webhook:', err);
-    res.status(500).json({ message: 'Failed to process webhook', error: err.message });
+    sendSafeError(res, err, 'Failed to process webhook.');
   }
 }

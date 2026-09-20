@@ -1,8 +1,10 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
+import { AuthenticatedRequest } from '../middleware/auth';
+import { sendSafeError } from '../utils/securityUtils';
 
-export async function getGitOpsSyncStatus(req: Request, res: Response): Promise<void> {
+export async function getGitOpsSyncStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { projectId } = req.query;
 
   if (!projectId) {
@@ -23,6 +25,7 @@ export async function getGitOpsSyncStatus(req: Request, res: Response): Promise<
     const currentStatus = history.length > 0 ? history[0] : null;
 
     res.status(200).json({
+      execution_mode: 'SIMULATED',
       app_name: currentStatus ? currentStatus.app_name : 'deploymate-core-service',
       sync_status: currentStatus ? currentStatus.sync_status : 'Synced',
       cluster_health: currentStatus ? currentStatus.cluster_health : 'Healthy',
@@ -31,11 +34,11 @@ export async function getGitOpsSyncStatus(req: Request, res: Response): Promise<
       history: history
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve GitOps status.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve GitOps status.');
   }
 }
 
-export async function triggerGitOpsSync(req: Request, res: Response): Promise<void> {
+export async function triggerGitOpsSync(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { project_id, app_name } = req.body;
 
   if (!project_id || !app_name) {
@@ -65,7 +68,7 @@ export async function triggerGitOpsSync(req: Request, res: Response): Promise<vo
         'Synced',
         'Healthy',
         false,
-        JSON.stringify({ desired_replicas: 3, live_replicas: 3, status: 'RECONCILED' }),
+        JSON.stringify({ desired_replicas: 3, live_replicas: 3, status: 'RECONCILED', execution_mode: 'SIMULATED' }),
         syncDuration
       ]
     );
@@ -76,19 +79,20 @@ export async function triggerGitOpsSync(req: Request, res: Response): Promise<vo
       source: 'gitops',
       severity: 'INFO',
       resource: app_name,
-      metadata: { revisionSha, syncDuration }
+      metadata: { revisionSha, syncDuration, execution_mode: 'SIMULATED' }
     });
 
     res.status(200).json({
-      message: 'GitOps synchronization and cluster state reconciliation completed successfully.',
+      message: 'GitOps synchronization and cluster state reconciliation completed (SIMULATED MODE).',
+      execution_mode: 'SIMULATED',
       sync: insertRes.rows[0]
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'GitOps sync execution failed.', error: error.message });
+    sendSafeError(res, error, 'GitOps sync execution failed.');
   }
 }
 
-export async function forceDriftState(req: Request, res: Response): Promise<void> {
+export async function forceDriftState(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { project_id, app_name } = req.body;
 
   if (!project_id || !app_name) {
@@ -102,7 +106,8 @@ export async function forceDriftState(req: Request, res: Response): Promise<void
       name: app_name,
       diff: `- replicas: 3\n+ replicas: 1\n- image: deploymate-api:latest\n+ image: deploymate-api:debug`,
       desired_spec: { replicas: 3, image: 'deploymate-api:latest' },
-      live_spec: { replicas: 1, image: 'deploymate-api:debug' }
+      live_spec: { replicas: 1, image: 'deploymate-api:debug' },
+      execution_mode: 'SIMULATED'
     };
 
     const insertRes = await query(
@@ -134,14 +139,15 @@ export async function forceDriftState(req: Request, res: Response): Promise<void
       source: 'gitops',
       severity: 'WARNING',
       resource: app_name,
-      metadata: { driftDetails }
+      metadata: { driftDetails, execution_mode: 'SIMULATED' }
     });
 
     res.status(200).json({
-      message: 'GitOps configuration drift detected between Git specs and live cluster state.',
+      message: 'GitOps configuration drift detected (SIMULATED MODE).',
+      execution_mode: 'SIMULATED',
       sync: insertRes.rows[0]
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Drift simulation setup failed.', error: error.message });
+    sendSafeError(res, error, 'Drift simulation setup failed.');
   }
 }
