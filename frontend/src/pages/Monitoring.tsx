@@ -61,7 +61,7 @@ export const Monitoring: React.FC = () => {
 
   const fetchHistory = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/v1/monitoring/history', {
+      const res = await fetch('/api/v1/monitoring/history', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -76,7 +76,7 @@ export const Monitoring: React.FC = () => {
 
   const fetchLive = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/v1/monitoring/live', {
+      const res = await fetch('/api/v1/monitoring/live', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {

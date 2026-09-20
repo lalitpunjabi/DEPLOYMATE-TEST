@@ -9,7 +9,9 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 import authRoutes from './routes/authRoutes';
+import adminRoutes from './routes/adminRoutes';
 import projectRoutes from './routes/projectRoutes';
 import pipelineRoutes from './routes/pipelineRoutes';
 import k8sRoutes from './routes/k8sRoutes';
@@ -23,7 +25,9 @@ import sreRoutes from './routes/sreRoutes';
 import chaosRoutes from './routes/chaosRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import policyRoutes from './routes/policyRoutes';
-import pool from './config/db';
+import pool, { query } from './config/db';
+import { getJwtSecret } from './middleware/auth';
+import { hashToken, sendSafeError } from './utils/securityUtils';
 
 const app = express();
 const server = http.createServer(app);
@@ -97,45 +101,123 @@ terminalWss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
   });
 });
 
-// Upgrade HTTP connection to WebSocket for logs and terminal streaming
-server.on('upgrade', (request, socket, head) => {
-  const pathname = new URL(request.url || '', `http://${request.headers.host}`).pathname;
+// Authenticated Upgrade HTTP connection to WebSocket with role validation
+server.on('upgrade', async (request, socket, head) => {
+  const urlObj = new URL(request.url || '', `http://${request.headers.host}`);
+  const pathname = urlObj.pathname;
+  const token = urlObj.searchParams.get('token');
 
-  if (pathname === '/ws/logs') {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
-  } else if (pathname === '/ws/terminal') {
-    terminalWss.handleUpgrade(request, socket, head, (ws) => {
-      terminalWss.emit('connection', ws, request);
-    });
-  } else {
+  if (pathname !== '/ws/logs' && pathname !== '/ws/terminal') {
     socket.destroy();
+    return;
+  }
+
+  // 1. Authenticate Token
+  if (!token) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nMissing token parameter');
+    socket.destroy();
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(token, getJwtSecret()) as { userId: string };
+    const tokenHashStr = hashToken(token);
+
+    const userRes = await query(
+      `SELECT u.id, u.is_active, r.name as role 
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE u.id = $1`,
+      [decoded.userId]
+    );
+
+    if (userRes.rowCount === 0 || userRes.rows[0].is_active === false) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nAccount disabled or user non-existent');
+      socket.destroy();
+      return;
+    }
+
+    const sessionCheck = await query(
+      `SELECT revoked_at, expires_at FROM user_sessions WHERE token_hash = $1`,
+      [tokenHashStr]
+    );
+
+    if (sessionCheck.rowCount && sessionCheck.rowCount > 0) {
+      if (sessionCheck.rows[0].revoked_at !== null || new Date(sessionCheck.rows[0].expires_at) < new Date()) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nSession revoked or expired');
+        socket.destroy();
+        return;
+      }
+    }
+
+    const userRole = userRes.rows[0].role;
+
+    // 2. Authorize Terminal Shell Access (Requires Super Admin or DevOps Engineer)
+    if (pathname === '/ws/terminal') {
+      if (userRole !== 'Super Admin' && userRole !== 'DevOps Engineer') {
+        socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nTerminal shell access requires Super Admin or DevOps Engineer role');
+        socket.destroy();
+        return;
+      }
+
+      terminalWss.handleUpgrade(request, socket, head, (ws) => {
+        terminalWss.emit('connection', ws, request);
+      });
+      return;
+    }
+
+    // 3. Authorize Log Streaming
+    if (pathname === '/ws/logs') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+      return;
+    }
+  } catch (err) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid or expired authentication token');
+    socket.destroy();
+    return;
   }
 });
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
+app.use(cors({
+  origin: [allowedOrigin, 'http://localhost', 'http://localhost:80', 'http://localhost:5173'],
+  credentials: true,
+}));
+app.use(express.json({ limit: '2mb' }));
 
-// Rate Limiting for Security
-const limiter = rateLimit({
+// Security Rate Limiting
+const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Too many requests from this IP, please try again later.' }
+  message: { message: 'Too many requests from this IP address, please try again later.' }
 });
-app.use('/api/', limiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20, // Stricter limit for authentication endpoints
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many authentication attempts. Please try again after 15 minutes.' }
+});
+
+app.use('/api/', globalLimiter);
+app.use('/api/v1/auth/login', authLimiter);
+app.use('/api/v1/auth/register', authLimiter);
+app.use('/api/v1/auth/forgot-password', authLimiter);
+app.use('/api/v1/auth/reset-password', authLimiter);
 
 // Root Welcome Endpoint
 app.get('/', (_req, res) => {
   res.status(200).json({
     name: 'DEPLOYMATE Enterprise Control Plane API Gateway',
     status: 'HEALTHY',
-    frontend_portal: 'http://localhost:5173',
-    health_endpoint: 'http://localhost:5000/health',
-    metrics_endpoint: 'http://localhost:5000/metrics'
+    health_endpoint: '/health',
+    metrics_endpoint: '/metrics'
   });
 });
 
@@ -149,7 +231,7 @@ app.get('/ready', async (_req, res) => {
     await pool.query('SELECT 1');
     res.status(200).json({ status: 'READY', database: 'CONNECTED', timestamp: new Date() });
   } catch (err: any) {
-    res.status(503).json({ status: 'UNREADY', database: 'DISCONNECTED', error: err.message });
+    res.status(503).json({ status: 'UNREADY', database: 'DISCONNECTED', error: process.env.NODE_ENV === 'development' ? err.message : 'Database unready' });
   }
 });
 
@@ -174,6 +256,7 @@ deploymate_active_websocket_streams ${activeLogStreams.size}
 
 // Mount Operational Routes
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/projects', projectRoutes);
 app.use('/api/v1/pipelines', pipelineRoutes);
 app.use('/api/v1/kubernetes', k8sRoutes);
@@ -190,14 +273,10 @@ app.use('/api/v1/policies', policyRoutes);
 
 // Fallback error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
-  res.status(err.status || 500).json({
-    message: err.message || 'Internal Server Error',
-    error: process.env.NODE_ENV === 'development' ? err : {}
-  });
+  sendSafeError(res, err, 'Internal Server Error', err.status || 500);
 });
 
-// Process exception handlers
+// Process exception handlers & Graceful shutdown
 process.on('uncaughtException', (err) => {
   console.error('[DEPLOYMATE BACKEND] Uncaught Exception:', err);
 });
@@ -207,7 +286,24 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const PORT = parseInt(process.env.PORT || '5000', 10);
-server.listen(PORT, () => {
+const serverInstance = server.listen(PORT, () => {
   console.log(`DEPLOYMATE Platform Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });
 
+function gracefulShutdown(signal: string) {
+  console.log(`[DEPLOYMATE BACKEND] ${signal} signal received. Closing HTTP server & connections...`);
+  
+  // Close active WebSockets
+  wss.clients.forEach(client => client.close(1001, 'Server shutting down'));
+  terminalWss.clients.forEach(client => client.close(1001, 'Server shutting down'));
+
+  serverInstance.close(async () => {
+    console.log('[DEPLOYMATE BACKEND] HTTP server closed. Closing database pool...');
+    await pool.end();
+    console.log('[DEPLOYMATE BACKEND] Database pool closed. Process exit.');
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

@@ -97,7 +97,7 @@ export const Deployments: React.FC = () => {
   // Fetch Namespaces
   const fetchNamespaces = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/v1/kubernetes/namespaces', {
+      const res = await fetch('/api/v1/kubernetes/namespaces', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -150,9 +150,9 @@ export const Deployments: React.FC = () => {
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       const [podsRes, depsRes, svcsRes] = await Promise.all([
-        fetch(`http://localhost:5000/api/v1/kubernetes/${selectedNamespace}/pods`, { headers }),
-        fetch(`http://localhost:5000/api/v1/kubernetes/${selectedNamespace}/deployments`, { headers }),
-        fetch(`http://localhost:5000/api/v1/kubernetes/${selectedNamespace}/services`, { headers }),
+        fetch(`/api/v1/kubernetes/${selectedNamespace}/pods`, { headers }),
+        fetch(`/api/v1/kubernetes/${selectedNamespace}/deployments`, { headers }),
+        fetch(`/api/v1/kubernetes/${selectedNamespace}/services`, { headers }),
       ]);
 
       if (podsRes.ok && depsRes.ok && svcsRes.ok) {
@@ -300,7 +300,8 @@ export const Deployments: React.FC = () => {
     setTerminalLogs([`Connecting to pod shell terminal: ${pod.name}...`]);
 
     try {
-      const ws = new WebSocket(`ws://localhost:5000/ws/terminal?pod=${pod.name}&namespace=${pod.namespace}`);
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/terminal?pod=${pod.name}&namespace=${pod.namespace}&token=${token}`);
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -341,7 +342,7 @@ export const Deployments: React.FC = () => {
     setIsRollbackLoading(deploymentName);
     setActionMessage(null);
     try {
-      const res = await fetch('http://localhost:5000/api/v1/kubernetes/rollback', {
+      const res = await fetch('/api/v1/kubernetes/rollback', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -368,7 +369,7 @@ export const Deployments: React.FC = () => {
     setCanaryApplying(true);
     setActionMessage(null);
     try {
-      const res = await fetch('http://localhost:5000/api/v1/kubernetes/canary-split', {
+      const res = await fetch('/api/v1/kubernetes/canary-split', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -398,7 +399,7 @@ export const Deployments: React.FC = () => {
     setActionMessage(null);
     const nextColor = activeBlueGreenColor === 'blue' ? 'green' : 'blue';
     try {
-      const res = await fetch('http://localhost:5000/api/v1/kubernetes/blue-green-swap', {
+      const res = await fetch('/api/v1/kubernetes/blue-green-swap', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

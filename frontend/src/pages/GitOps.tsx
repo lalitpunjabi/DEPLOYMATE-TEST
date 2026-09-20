@@ -50,7 +50,7 @@ export const GitOps: React.FC = () => {
   const fetchStatus = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/v1/gitops/sync-status?projectId=${projectId}`, {
+      const response = await fetch(`/api/v1/gitops/sync-status?projectId=${projectId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -72,7 +72,7 @@ export const GitOps: React.FC = () => {
     setSyncing(true);
     setMessage(null);
     try {
-      const response = await fetch('http://localhost:5000/api/v1/gitops/sync', {
+      const response = await fetch('/api/v1/gitops/sync', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -95,7 +95,7 @@ export const GitOps: React.FC = () => {
     setLoading(true);
     setMessage(null);
     try {
-      const response = await fetch('http://localhost:5000/api/v1/gitops/drift-trigger', {
+      const response = await fetch('/api/v1/gitops/drift-trigger', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

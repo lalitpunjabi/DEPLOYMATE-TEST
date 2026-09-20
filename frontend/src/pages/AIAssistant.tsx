@@ -108,7 +108,7 @@ spec:
     setIsChatLoading(true);
 
     try {
-      const response = await fetch('http://localhost:5000/api/v1/ai/chat', {
+      const response = await fetch('/api/v1/ai/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -143,7 +143,7 @@ spec:
     setAppliedFixes([]);
 
     try {
-      const response = await fetch('http://localhost:5000/api/v1/ai/risk-assessment', {
+      const response = await fetch('/api/v1/ai/risk-assessment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -202,7 +202,7 @@ spec:
     setIsPrCreating(true);
     setPrStatusMessage(null);
     try {
-      const res = await fetch('http://localhost:5000/api/v1/ai/create-fix-pr', {
+      const res = await fetch('/api/v1/ai/create-fix-pr', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -269,7 +269,7 @@ spec:
     setCopied(false);
 
     try {
-      const response = await fetch('http://localhost:5000/api/v1/ai/pipeline-generator', {
+      const response = await fetch('/api/v1/ai/pipeline-generator', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

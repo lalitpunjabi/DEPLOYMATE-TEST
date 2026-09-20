@@ -62,7 +62,7 @@ export const Projects: React.FC = () => {
   const fetchProjects = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/v1/projects', {
+      const response = await fetch('/api/v1/projects', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -96,7 +96,7 @@ export const Projects: React.FC = () => {
     setIsCreating(true);
 
     try {
-      const response = await fetch('http://localhost:5000/api/v1/projects', {
+      const response = await fetch('/api/v1/projects', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

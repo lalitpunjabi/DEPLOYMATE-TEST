@@ -1,37 +1,43 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { query } from '../config/db';
-
-const getJwtSecret = () => process.env.JWT_SECRET || 'deploymate-jwt-secret-key-change-in-production';
+import { getJwtSecret } from '../middleware/auth';
+import { hashToken, sendSafeError } from '../utils/securityUtils';
 
 export async function register(req: Request, res: Response): Promise<void> {
-  const { name, email, password, roleName } = req.body;
+  const { name, email, password } = req.body;
 
   if (!name || !email || !password) {
     res.status(400).json({ message: 'Name, email, and password are required.' });
     return;
   }
 
+  if (password.length < 8) {
+    res.status(400).json({ message: 'Password must be at least 8 characters long.' });
+    return;
+  }
+
   try {
     // Check if user already exists
-    const userExist = await query('SELECT 1 FROM users WHERE email = $1', [email]);
+    const userExist = await query('SELECT 1 FROM users WHERE email = $1', [email.toLowerCase().trim()]);
     if (userExist.rowCount && userExist.rowCount > 0) {
       res.status(400).json({ message: 'User with this email already exists.' });
       return;
     }
 
-    // Default to Developer if no role specified or is an invalid role
-    const targetRoleName = roleName || 'Developer';
+    // ALWAYS enforce 'Developer' role for public self-registration (No privilege escalation allowed!)
+    const targetRoleName = 'Developer';
     const roleRes = await query('SELECT id FROM roles WHERE name = $1', [targetRoleName]);
     if (roleRes.rowCount === 0) {
-      res.status(400).json({ message: `Role "${targetRoleName}" not found.` });
+      res.status(500).json({ message: 'Default Developer role configuration error.' });
       return;
     }
     const roleId = roleRes.rows[0].id;
 
     // Hash password
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     const passwordHash = await bcrypt.hash(password, salt);
 
     // Save user
@@ -39,7 +45,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       `INSERT INTO users (name, email, password_hash, role_id) 
        VALUES ($1, $2, $3, $4) 
        RETURNING id, name, email, created_at`,
-      [name, email, passwordHash, roleId]
+      [name.trim(), email.toLowerCase().trim(), passwordHash, roleId]
     );
 
     const newUser = insertRes.rows[0];
@@ -48,7 +54,7 @@ export async function register(req: Request, res: Response): Promise<void> {
     await query(
       `INSERT INTO audit_logs (user_id, action, resource, details)
        VALUES ($1, $2, $3, $4)`,
-      [newUser.id, 'REGISTER', 'USER', JSON.stringify({ email: newUser.email })]
+      [newUser.id, 'REGISTER', 'USER', JSON.stringify({ email: newUser.email, assignedRole: 'Developer' })]
     );
 
     res.status(201).json({
@@ -61,8 +67,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       },
     });
   } catch (error: any) {
-    console.error('Registration error:', error);
-    res.status(500).json({ message: 'Internal server error.', error: error.message });
+    sendSafeError(res, error, 'Registration failed.');
   }
 }
 
@@ -75,13 +80,14 @@ export async function login(req: Request, res: Response): Promise<void> {
   }
 
   try {
+    const cleanEmail = email.toLowerCase().trim();
     // Fetch user and role name
     const userRes = await query(
-      `SELECT u.id, u.name, u.email, u.password_hash, r.name as role_name
+      `SELECT u.id, u.name, u.email, u.password_hash, u.is_active, r.name as role_name
        FROM users u
        JOIN roles r ON u.role_id = r.id
        WHERE u.email = $1`,
-      [email]
+      [cleanEmail]
     );
 
     if (userRes.rowCount === 0) {
@@ -91,21 +97,42 @@ export async function login(req: Request, res: Response): Promise<void> {
 
     const user = userRes.rows[0];
 
+    if (user.is_active === false) {
+      res.status(403).json({ message: 'User account has been disabled by administrator.' });
+      return;
+    }
+
     // Verify password
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
+      // Audit log failed login
+      await query(
+        `INSERT INTO audit_logs (user_id, action, resource, details)
+         VALUES ($1, $2, $3, $4)`,
+        [user.id, 'LOGIN_FAILURE', 'USER', JSON.stringify({ email: cleanEmail, reason: 'Invalid password' })]
+      );
       res.status(401).json({ message: 'Invalid email or password.' });
       return;
     }
 
     // Generate JWT
-    const token = jwt.sign({ userId: user.id }, getJwtSecret(), { expiresIn: '24h' });
+    const sessionId = crypto.randomUUID();
+    const token = jwt.sign({ userId: user.id, sessionId }, getJwtSecret(), { expiresIn: '8h' });
+    const tokenHashStr = hashToken(token);
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
 
-    // Log audit log
+    // Save active session in user_sessions
+    await query(
+      `INSERT INTO user_sessions (user_id, token_hash, ip_address, user_agent, expires_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [user.id, tokenHashStr, req.ip || req.socket.remoteAddress || '', req.headers['user-agent'] || '', expiresAt]
+    );
+
+    // Audit log successful login
     await query(
       `INSERT INTO audit_logs (user_id, action, resource, details)
        VALUES ($1, $2, $3, $4)`,
-      [user.id, 'LOGIN', 'USER', JSON.stringify({ email: user.email })]
+      [user.id, 'LOGIN_SUCCESS', 'USER', JSON.stringify({ email: user.email })]
     );
 
     res.status(200).json({
@@ -119,20 +146,25 @@ export async function login(req: Request, res: Response): Promise<void> {
       },
     });
   } catch (error: any) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Internal server error.', error: error.message });
+    sendSafeError(res, error, 'Login failed.');
   }
 }
 
 export async function logout(req: Request, res: Response): Promise<void> {
-  // Since JWT is stateless, logout is handled by client disposing the token.
-  // We return a simple confirmation and log audit log if request was authenticated.
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
   if (token) {
     try {
       const decoded = jwt.verify(token, getJwtSecret()) as { userId: string };
+      const tokenHashStr = hashToken(token);
+
+      // Revoke session in database
+      await query(
+        `UPDATE user_sessions SET revoked_at = NOW() WHERE token_hash = $1`,
+        [tokenHashStr]
+      );
+
       await query(
         `INSERT INTO audit_logs (user_id, action, resource, details)
          VALUES ($1, $2, $3, $4)`,
@@ -146,40 +178,119 @@ export async function logout(req: Request, res: Response): Promise<void> {
   res.status(200).json({ message: 'Logout successful.' });
 }
 
-export async function resetPassword(req: Request, res: Response): Promise<void> {
-  const { email, newPassword } = req.body;
+export async function forgotPassword(req: Request, res: Response): Promise<void> {
+  const { email } = req.body;
 
-  if (!email || !newPassword) {
-    res.status(400).json({ message: 'Email and new password are required.' });
+  if (!email) {
+    res.status(400).json({ message: 'Email is required.' });
     return;
   }
 
+  // Uniform response message to prevent email enumeration
+  const genericResponse = {
+    message: 'If an account with that email exists, a password reset request has been processed.',
+  };
+
   try {
-    const userRes = await query('SELECT id FROM users WHERE email = $1', [email]);
+    const cleanEmail = email.toLowerCase().trim();
+    const userRes = await query('SELECT id FROM users WHERE email = $1', [cleanEmail]);
+
     if (userRes.rowCount === 0) {
-      res.status(404).json({ message: 'User not found.' });
+      res.status(200).json(genericResponse);
       return;
     }
 
     const userId = userRes.rows[0].id;
-    const salt = await bcrypt.genSalt(10);
+    const rawResetToken = crypto.randomBytes(32).toString('hex');
+    const tokenHashStr = hashToken(rawResetToken);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes expiry
+
+    await query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3)`,
+      [userId, tokenHashStr, expiresAt]
+    );
+
+    await query(
+      `INSERT INTO audit_logs (user_id, action, resource, details)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, 'PASSWORD_RESET_REQUEST', 'USER', JSON.stringify({ email: cleanEmail })]
+    );
+
+    // In production without SMTP configured, include token in non-production response only for dev testing
+    const responseData: any = { ...genericResponse };
+    if (process.env.NODE_ENV !== 'production') {
+      responseData.dev_reset_token = rawResetToken;
+    }
+
+    res.status(200).json(responseData);
+  } catch (error: any) {
+    sendSafeError(res, error, 'Password reset request failed.');
+  }
+}
+
+export async function resetPassword(req: Request, res: Response): Promise<void> {
+  const { token, newPassword } = req.body;
+
+  if (!token || !newPassword) {
+    res.status(400).json({ message: 'Token and new password are required.' });
+    return;
+  }
+
+  if (newPassword.length < 8) {
+    res.status(400).json({ message: 'New password must be at least 8 characters long.' });
+    return;
+  }
+
+  try {
+    const tokenHashStr = hashToken(token);
+    const tokenRes = await query(
+      `SELECT id, user_id, expires_at, used_at FROM password_reset_tokens WHERE token_hash = $1`,
+      [tokenHashStr]
+    );
+
+    if (tokenRes.rowCount === 0) {
+      res.status(400).json({ message: 'Invalid or expired password reset token.' });
+      return;
+    }
+
+    const resetTokenObj = tokenRes.rows[0];
+
+    if (resetTokenObj.used_at !== null) {
+      res.status(400).json({ message: 'This reset token has already been used.' });
+      return;
+    }
+
+    if (new Date(resetTokenObj.expires_at) < new Date()) {
+      res.status(400).json({ message: 'Password reset token has expired.' });
+      return;
+    }
+
+    const userId = resetTokenObj.user_id;
+    const salt = await bcrypt.genSalt(12);
     const passwordHash = await bcrypt.hash(newPassword, salt);
 
+    // Update password
     await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [
       passwordHash,
       userId,
     ]);
 
-    // Log audit log
+    // Mark reset token as used
+    await query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [resetTokenObj.id]);
+
+    // Revoke all active sessions for this user after password reset
+    await query('UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+
+    // Audit log
     await query(
       `INSERT INTO audit_logs (user_id, action, resource, details)
        VALUES ($1, $2, $3, $4)`,
-      [userId, 'PASSWORD_RESET', 'USER', JSON.stringify({ email })]
+      [userId, 'PASSWORD_RESET_SUCCESS', 'USER', '{}']
     );
 
-    res.status(200).json({ message: 'Password reset successful.' });
+    res.status(200).json({ message: 'Password reset successful. Please log in with your new password.' });
   } catch (error: any) {
-    console.error('Password reset error:', error);
-    res.status(500).json({ message: 'Internal server error.', error: error.message });
+    sendSafeError(res, error, 'Password reset failed.');
   }
 }

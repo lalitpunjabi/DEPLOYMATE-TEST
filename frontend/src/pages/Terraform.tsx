@@ -37,7 +37,7 @@ export const Terraform: React.FC = () => {
 
   const fetchStates = async () => {
     try {
-      const response = await fetch(`http://localhost:5000/api/v1/terraform/states?projectId=${projectId}`, {
+      const response = await fetch(`/api/v1/terraform/states?projectId=${projectId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -57,7 +57,7 @@ export const Terraform: React.FC = () => {
     if (!prompt) return;
     setGenerating(true);
     try {
-      const response = await fetch('http://localhost:5000/api/v1/terraform/generate', {
+      const response = await fetch('/api/v1/terraform/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -82,7 +82,7 @@ export const Terraform: React.FC = () => {
     setIsLocked(true);
     setConsoleLogs('[terraform init] Initializing provider plugins...\n');
     try {
-      const response = await fetch('http://localhost:5000/api/v1/terraform/plan', {
+      const response = await fetch('/api/v1/terraform/plan', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -110,7 +110,7 @@ export const Terraform: React.FC = () => {
     setIsLocked(true);
     setConsoleLogs((prev) => prev + '\n\n[terraform apply] Acquiring state lock inside Postgres...\n');
     try {
-      const response = await fetch('http://localhost:5000/api/v1/terraform/apply', {
+      const response = await fetch('/api/v1/terraform/apply', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

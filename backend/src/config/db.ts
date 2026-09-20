@@ -11,15 +11,13 @@ const pool = new Pool({
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME || 'deploymate',
-});
-
-// Test connection helper
-pool.on('connect', () => {
-  // Connection succeeded
+  max: parseInt(process.env.DB_POOL_MAX || '20', 10), // Explicit production connection pool max limit
+  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+  connectionTimeoutMillis: 5000, // Return an error after 5 seconds if connection cannot be established
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
+  console.error('[DEPLOYMATE DB POOL] Unexpected error on idle client:', err);
 });
 
 export const query = (text: string, params?: any[]) => {

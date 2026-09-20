@@ -779,7 +779,7 @@ export const Settings: React.FC = () => {
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-muted">Web API Orchestration Reference</h4>
                 <p className="text-[11px] text-muted">Trigger a pipeline run programmatically from third-party scripts via HTTP Post request:</p>
                 <pre className="text-xs font-mono p-3 rounded bg-slate-950 text-slate-300 border border-white/[0.02] whitespace-pre-wrap leading-relaxed select-all">
-                  {`curl -X POST http://localhost:5000/api/v1/pipelines/run_blueprint_p1 \\
+                  {`curl -X POST /api/v1/pipelines/run_blueprint_p1 \\
   -H "Authorization: Bearer ${generatedKey || 'dm_live_••••••••••••••••'}" \\
   -H "Content-Type: application/json" \\
   -d '{"branch": "main", "trigger_reason": "External webhook dispatch"}'`}

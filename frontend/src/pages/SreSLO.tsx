@@ -62,13 +62,13 @@ export const SreSLO: React.FC = () => {
 
   const fetchSreData = async () => {
     try {
-      const sloRes = await fetch('http://localhost:5000/api/v1/sre/slo-health', {
+      const sloRes = await fetch('/api/v1/sre/slo-health', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      const incRes = await fetch('http://localhost:5000/api/v1/sre/incidents', {
+      const incRes = await fetch('/api/v1/sre/incidents', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      const healingRes = await fetch('http://localhost:5000/api/v1/sre/self-healing-actions', {
+      const healingRes = await fetch('/api/v1/sre/self-healing-actions', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
@@ -89,7 +89,7 @@ export const SreSLO: React.FC = () => {
     if (!title || !description) return;
     setSubmitting(true);
     try {
-      const response = await fetch('http://localhost:5000/api/v1/sre/incidents', {
+      const response = await fetch('/api/v1/sre/incidents', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -118,7 +118,7 @@ export const SreSLO: React.FC = () => {
     
     setBuildingPostmortem(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/v1/sre/incidents/${id}/postmortem`, {
+      const response = await fetch(`/api/v1/sre/incidents/${id}/postmortem`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });

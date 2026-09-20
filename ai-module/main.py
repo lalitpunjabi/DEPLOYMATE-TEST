@@ -12,12 +12,14 @@ load_dotenv()
 
 app = FastAPI(title="Deploymate AI Engine", version="1.0.0")
 
-# Enable CORS for communication
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://backend:5000,http://localhost:5000,http://localhost:5173").split(",")
+
+# Enable CORS restricted to internal services
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -385,4 +387,5 @@ def troubleshoot_pod(data: PodTroubleshootInput):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    is_prod = os.getenv("ENVIRONMENT") == "production" or os.getenv("NODE_ENV") == "production"
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=not is_prod, workers=4 if is_prod else 1)

@@ -129,22 +129,32 @@ async function init() {
     }
     console.log('Roles seeded.');
 
-    // 4. Seed default Super Admin User
+    // 4. Seed Super Admin User
     const superAdminRoleRes = await client.query("SELECT id FROM roles WHERE name = 'Super Admin'");
     const adminRoleId = superAdminRoleRes.rows[0].id;
 
-    const adminEmail = process.env.INITIAL_ADMIN_EMAIL || 'admin@deploymate.com';
-    const adminPassword = process.env.INITIAL_ADMIN_PASSWORD || 'admin123';
-    const salt = await bcrypt.genSalt(10);
+    let adminEmail = process.env.INITIAL_ADMIN_EMAIL;
+    let adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
+
+    if (!adminEmail || !adminPassword) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('FATAL SECURITY ERROR: INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD environment variables are required in production mode.');
+      }
+      adminEmail = adminEmail || 'admin@deploymate.local';
+      adminPassword = adminPassword || 'AdminPass123!';
+      console.warn('⚠️ WARNING: Using default development admin credentials. Set INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD in production!');
+    }
+
+    const salt = await bcrypt.genSalt(12);
     const passwordHash = await bcrypt.hash(adminPassword, salt);
 
-    const userCheck = await client.query("SELECT 1 FROM users WHERE email = $1", [adminEmail]);
+    const userCheck = await client.query("SELECT 1 FROM users WHERE email = $1", [adminEmail.toLowerCase().trim()]);
     if (userCheck.rowCount === 0) {
-      console.log(`Seeding default Super Admin user (${adminEmail})...`);
+      console.log(`Seeding initial Super Admin user (${adminEmail})...`);
       await client.query(
         `INSERT INTO users (name, email, password_hash, role_id) 
          VALUES ($1, $2, $3, $4)`,
-        ['Super Administrator', adminEmail, passwordHash, adminRoleId]
+        ['Super Administrator', adminEmail.toLowerCase().trim(), passwordHash, adminRoleId]
       );
       console.log('Super Admin user seeded successfully.');
     } else {

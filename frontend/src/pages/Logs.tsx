@@ -83,7 +83,7 @@ export const Logs: React.FC = () => {
       if (selectedLevel) urlParams.append('level', selectedLevel);
       if (searchQuery) urlParams.append('query', searchQuery);
 
-      const res = await fetch(`http://localhost:5000/api/v1/logs?${urlParams.toString()}`, {
+      const res = await fetch(`/api/v1/logs?${urlParams.toString()}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 

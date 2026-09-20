@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { listPolicies, evaluatePolicy } from '../controllers/policyController';
-import { authenticateToken } from '../middleware/auth';
+import { authenticateToken, checkPermission } from '../middleware/auth';
 
 const router = Router();
 
 router.use(authenticateToken);
 
-router.get('/', listPolicies);
-router.post('/evaluate', evaluatePolicy);
+router.get('/', checkPermission('security.read'), listPolicies);
+router.post('/evaluate', checkPermission('security.read'), evaluatePolicy);
 
 export default router;

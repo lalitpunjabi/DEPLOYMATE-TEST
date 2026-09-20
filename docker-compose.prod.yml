@@ -1,0 +1,123 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: deploymate-db-prod
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_DB: ${DB_NAME:-deploymate}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    # Port 5432 is isolated inside private internal container network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - deploymate-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deploymate-backend-prod
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PORT: 5000
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-deploymate}
+      JWT_SECRET: ${JWT_SECRET}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD}
+      AI_SERVICE_URL: http://ai-module:8000
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+    # Port 5000 is isolated inside private internal container network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - deploymate-net
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:5000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ai-module:
+    build:
+      context: ./ai-module
+      dockerfile: Dockerfile
+    container_name: deploymate-ai-module-prod
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PORT: 8000
+      ENVIRONMENT: production
+      NODE_ENV: production
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ALLOWED_ORIGINS: http://backend:5000
+    # Port 8000 is isolated inside private internal container network
+    networks:
+      - deploymate-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: deploymate-frontend-prod
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    # Only Nginx Reverse Proxy exposes public HTTP port 80
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      ai-module:
+        condition: service_healthy
+    networks:
+      - deploymate-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  deploymate-net:
+    driver: bridge
+
+volumes:
+  postgres_data:

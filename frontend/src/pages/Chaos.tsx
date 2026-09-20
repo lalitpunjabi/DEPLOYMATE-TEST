@@ -50,7 +50,7 @@ export const Chaos: React.FC = () => {
 
   const fetchChaosHistory = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/v1/chaos/history', {
+      const response = await fetch('/api/v1/chaos/history', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -74,7 +74,7 @@ export const Chaos: React.FC = () => {
     setRunning(true);
     setMessage(null);
     try {
-      const response = await fetch('http://localhost:5000/api/v1/chaos/inject', {
+      const response = await fetch('/api/v1/chaos/inject', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

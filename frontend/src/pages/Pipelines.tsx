@@ -87,7 +87,7 @@ export const Pipelines: React.FC = () => {
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/v1/projects', {
+        const res = await fetch('/api/v1/projects', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.ok) {
@@ -113,7 +113,7 @@ export const Pipelines: React.FC = () => {
     const fetchPipelines = async () => {
       setIsLoading(true);
       try {
-        const res = await fetch(`http://localhost:5000/api/v1/pipelines?projectId=${selectedProject.id}`, {
+        const res = await fetch(`/api/v1/pipelines?projectId=${selectedProject.id}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.ok) {
@@ -140,7 +140,7 @@ export const Pipelines: React.FC = () => {
   const fetchRuns = async () => {
     if (!selectedPipeline) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/v1/pipelines/runs?pipelineId=${selectedPipeline.id}`, {
+      const res = await fetch(`/api/v1/pipelines/runs?pipelineId=${selectedPipeline.id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -186,7 +186,7 @@ export const Pipelines: React.FC = () => {
     }
 
     try {
-      const res = await fetch(`http://localhost:5000/api/v1/pipelines/runs/${run.id}`, {
+      const res = await fetch(`/api/v1/pipelines/runs/${run.id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -205,7 +205,8 @@ export const Pipelines: React.FC = () => {
   };
 
   const connectWebSocket = (runId: string) => {
-    const ws = new WebSocket(`ws://localhost:5000/ws/logs?runId=${runId}`);
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/logs?runId=${runId}&token=${token}`);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
@@ -232,7 +233,7 @@ export const Pipelines: React.FC = () => {
     setIsTriggering(true);
     setError(null);
     try {
-      const res = await fetch(`http://localhost:5000/api/v1/pipelines/${selectedPipeline.id}/run`, {
+      const res = await fetch(`/api/v1/pipelines/${selectedPipeline.id}/run`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -279,7 +280,7 @@ export const Pipelines: React.FC = () => {
     }
 
     try {
-      const response = await fetch('http://localhost:5000/api/v1/ai/failure-analysis', {
+      const response = await fetch('/api/v1/ai/failure-analysis', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
