@@ -169,21 +169,61 @@ export async function requireProjectAccess(
     return;
   }
 
-  const projectId = req.params.projectId || req.params.id || req.body.projectId;
-  if (!projectId) {
-    next();
-    return;
-  }
+  let projectId = req.params.projectId || req.params.id || req.body.projectId || req.query.projectId as string;
 
   try {
-    const projRes = await query('SELECT id FROM projects WHERE id = $1', [projectId]);
+    // Resolve child resource parameters to parent projectId if necessary
+    if (!projectId && req.params.pipelineId) {
+      const pRes = await query('SELECT project_id FROM pipelines WHERE id = $1', [req.params.pipelineId]);
+      if (pRes.rowCount && pRes.rowCount > 0) projectId = pRes.rows[0].project_id;
+    }
+    if (!projectId && (req.params.runId || req.params.pipelineRunId)) {
+      const runId = req.params.runId || req.params.pipelineRunId;
+      const prRes = await query(
+        'SELECT p.project_id FROM pipeline_runs pr JOIN pipelines p ON pr.pipeline_id = p.id WHERE pr.id = $1',
+        [runId]
+      );
+      if (prRes.rowCount && prRes.rowCount > 0) projectId = prRes.rows[0].project_id;
+    }
+    if (!projectId && req.params.deploymentId) {
+      const dRes = await query('SELECT project_id FROM deployments WHERE id = $1', [req.params.deploymentId]);
+      if (dRes.rowCount && dRes.rowCount > 0) projectId = dRes.rows[0].project_id;
+    }
+    if (!projectId && req.params.stateId) {
+      const sRes = await query('SELECT project_id FROM terraform_states WHERE id = $1', [req.params.stateId]);
+      if (sRes.rowCount && sRes.rowCount > 0) projectId = sRes.rows[0].project_id;
+    }
+
+    if (!projectId) {
+      next();
+      return;
+    }
+
+    // Check project existence & ownership
+    const projRes = await query('SELECT id, owner_id FROM projects WHERE id = $1', [projectId]);
     if (projRes.rowCount === 0) {
-      // 404 to avoid leaking project existence
       res.status(404).json({ message: 'Project not found.' });
       return;
     }
 
-    next();
+    const project = projRes.rows[0];
+    if (project.owner_id === req.user.id) {
+      next();
+      return;
+    }
+
+    // Check membership in project_members table
+    const memberRes = await query(
+      'SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2',
+      [projectId, req.user.id]
+    );
+
+    if (memberRes.rowCount && memberRes.rowCount > 0) {
+      next();
+      return;
+    }
+
+    res.status(403).json({ message: 'Forbidden. You do not have authorization to access this project resource.' });
   } catch {
     res.status(404).json({ message: 'Project not found.' });
   }

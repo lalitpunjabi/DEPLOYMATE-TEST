@@ -29,6 +29,11 @@ jobs:
           cd backend
           npx ts-node src/__tests__/security.test.ts
 
+      - name: Run Dependency Audit
+        run: |
+          cd backend
+          npm audit --audit-level=critical || true
+
       - name: Run TypeScript Build Check
         run: |
           cd backend

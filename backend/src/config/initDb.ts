@@ -27,6 +27,10 @@ async function init() {
     console.log('Connected to default postgres database.');
 
     const dbName = process.env.DB_NAME || 'deploymate';
+    if (!/^[a-zA-Z0-9_]+$/.test(dbName)) {
+      throw new Error(`SECURITY ERROR: Invalid database name identifier "${dbName}". Must contain alphanumeric characters and underscores only.`);
+    }
+
     const dbCheckRes = await adminClient.query(
       "SELECT 1 FROM pg_database WHERE datname = $1",
       [dbName]
@@ -34,10 +38,26 @@ async function init() {
 
     if (dbCheckRes.rowCount === 0) {
       console.log(`Database "${dbName}" does not exist. Creating...`);
+      // dbName is validated against strict alphanumeric regex above
       await adminClient.query(`CREATE DATABASE ${dbName}`);
       console.log(`Database "${dbName}" created successfully.`);
     } else {
       console.log(`Database "${dbName}" already exists.`);
+    }
+
+    // Provision dedicated non-superuser application role
+    const appUser = process.env.DB_APP_USER || 'deploymate_app';
+    const appPassword = process.env.DB_APP_PASSWORD || 'deploymate_app_password';
+    if (!/^[a-zA-Z0-9_]+$/.test(appUser)) {
+      throw new Error(`SECURITY ERROR: Invalid app user identifier "${appUser}".`);
+    }
+
+    const roleCheck = await adminClient.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [appUser]);
+    if (roleCheck.rowCount === 0) {
+      console.log(`Creating non-superuser application role "${appUser}"...`);
+      // Passwords are parameterized or sanitized
+      const sanitizedPass = appPassword.replace(/'/g, "''");
+      await adminClient.query(`CREATE USER ${appUser} WITH PASSWORD '${sanitizedPass}'`);
     }
   } catch (error) {
     console.error('Error checking/creating database:', error);

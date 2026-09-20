@@ -8,8 +8,8 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432', 10),
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
+  user: process.env.DB_APP_USER || 'deploymate_app',
+  password: process.env.DB_APP_PASSWORD || 'deploymate_app_password',
   database: process.env.DB_NAME || 'deploymate',
   max: parseInt(process.env.DB_POOL_MAX || '20', 10), // Explicit production connection pool max limit
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds

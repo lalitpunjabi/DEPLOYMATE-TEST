@@ -8,6 +8,8 @@ import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
+import helmet from 'helmet';
+import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import authRoutes from './routes/authRoutes';
@@ -31,6 +33,45 @@ import { hashToken, sendSafeError } from './utils/securityUtils';
 
 const app = express();
 const server = http.createServer(app);
+
+// Enable proxy trust for Express when behind Nginx reverse proxy
+app.set('trust proxy', 1);
+
+// Request Correlation ID Middleware
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const existingReqId = req.headers['x-request-id'] as string;
+  const requestId = existingReqId || crypto.randomUUID();
+  (req as any).id = requestId;
+  res.setHeader('X-Request-ID', requestId);
+  next();
+});
+
+// HTTP Security Headers via Helmet
+const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        connectSrc: ["'self'", 'ws:', 'wss:', allowedOrigin],
+      },
+    },
+    hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true } : false,
+  })
+);
+
+// Production CORS Configuration
+const corsOrigins =
+  process.env.NODE_ENV === 'production'
+    ? [allowedOrigin]
+    : [allowedOrigin, 'http://localhost', 'http://localhost:80', 'http://localhost:5173'];
+
+app.use(cors({ origin: corsOrigins, credentials: true }));
+app.use(express.json({ limit: '2mb' }));
 
 // Initialize WebSocket Servers for streaming pipeline logs and interactive pod terminal
 const wss = new WebSocketServer({ noServer: true });
@@ -70,26 +111,30 @@ terminalWss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
   const podName = urlParams.searchParams.get('pod') || 'deploymate-api-pod';
   const namespace = urlParams.searchParams.get('namespace') || 'default';
 
-  ws.send(JSON.stringify({ 
-    output: `\x1b[32mConnected to Pod Shell: ${podName} (${namespace})\x1b[0m\r\nType 'help' or commands (ls, ps, top, env, exit)...\r\n$ ` 
-  }));
+  ws.send(
+    JSON.stringify({
+      output: `\x1b[32mConnected to Pod Shell: ${podName} (${namespace})\x1b[0m\r\nType 'help' or commands (ls, ps, top, env, exit)...\r\n$ `,
+    })
+  );
 
   ws.on('message', (message: string) => {
     const command = message.toString().trim();
     let reply = '';
 
     if (command === 'help') {
-      reply = "Available shell commands: ls, ps, top, env, uname -a, cat /etc/hosts, exit\r\n";
+      reply = 'Available shell commands: ls, ps, top, env, uname -a, cat /etc/hosts, exit\r\n';
     } else if (command === 'ls' || command === 'ls -la') {
-      reply = "drwxr-xr-x 1 root root  4096 Sep 17 21:30 .\r\ndrwxr-xr-x 1 root root  4096 Sep 17 21:30 ..\r\n-rw-r--r-- 1 root root   466 Sep 17 21:30 Dockerfile\r\ndrwxr-xr-x 1 root root  4096 Sep 17 21:30 dist\r\n-rw-r--r-- 1 root root  1011 Sep 17 21:30 package.json\r\n";
+      reply =
+        'drwxr-xr-x 1 root root  4096 Sep 17 21:30 .\r\ndrwxr-xr-x 1 root root  4096 Sep 17 21:30 ..\r\n-rw-r--r-- 1 root root   466 Sep 17 21:30 Dockerfile\r\ndrwxr-xr-x 1 root root  4096 Sep 17 21:30 dist\r\n-rw-r--r-- 1 root root  1011 Sep 17 21:30 package.json\r\n';
     } else if (command === 'ps' || command === 'ps aux') {
-      reply = "PID   USER     TIME  COMMAND\r\n    1 root      0:05 node dist/index.js\r\n   42 root      0:00 sh -c pod-health-checker\r\n";
+      reply =
+        'PID   USER     TIME  COMMAND\r\n    1 root      0:05 node dist/index.js\r\n   42 root      0:00 sh -c pod-health-checker\r\n';
     } else if (command === 'env') {
       reply = `NODE_ENV=production\r\nPORT=5000\r\nKUBERNETES_SERVICE_HOST=10.96.0.1\r\nPOD_NAME=${podName}\r\nNAMESPACE=${namespace}\r\n`;
     } else if (command === 'top') {
-      reply = "MemTotal: 8192000 kB | MemFree: 4120000 kB\r\nCPU: 12.4% usr, 3.1% sys, 84.5% idle\r\n";
+      reply = 'MemTotal: 8192000 kB | MemFree: 4120000 kB\r\nCPU: 12.4% usr, 3.1% sys, 84.5% idle\r\n';
     } else if (command === 'uname -a') {
-      reply = "Linux deploymate-control-plane 6.6.13-linux-x86_64 #1 SMP K8s\r\n";
+      reply = 'Linux deploymate-control-plane 6.6.13-linux-x86_64 #1 SMP K8s\r\n';
     } else if (command === 'exit') {
       ws.close(1000, 'Session closed by operator');
       return;
@@ -101,7 +146,7 @@ terminalWss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
   });
 });
 
-// Authenticated Upgrade HTTP connection to WebSocket with role validation
+// Authenticated Upgrade HTTP connection to WebSocket with role & resource validation
 server.on('upgrade', async (request, socket, head) => {
   const urlObj = new URL(request.url || '', `http://${request.headers.host}`);
   const pathname = urlObj.pathname;
@@ -150,12 +195,15 @@ server.on('upgrade', async (request, socket, head) => {
       }
     }
 
+    const userId = userRes.rows[0].id;
     const userRole = userRes.rows[0].role;
 
     // 2. Authorize Terminal Shell Access (Requires Super Admin or DevOps Engineer)
     if (pathname === '/ws/terminal') {
       if (userRole !== 'Super Admin' && userRole !== 'DevOps Engineer') {
-        socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nTerminal shell access requires Super Admin or DevOps Engineer role');
+        socket.write(
+          'HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nTerminal shell access requires Super Admin or DevOps Engineer role'
+        );
         socket.destroy();
         return;
       }
@@ -166,27 +214,55 @@ server.on('upgrade', async (request, socket, head) => {
       return;
     }
 
-    // 3. Authorize Log Streaming
+    // 3. Authorize Log Streaming & Verify Resource Project Access
     if (pathname === '/ws/logs') {
+      const runId = urlObj.searchParams.get('runId');
+      if (runId && userRole !== 'Super Admin') {
+        const runRes = await query(
+          `SELECT p.project_id, p.owner_id 
+           FROM pipeline_runs pr 
+           JOIN pipelines pl ON pr.pipeline_id = pl.id 
+           JOIN projects p ON pl.project_id = p.id 
+           WHERE pr.id = $1`,
+          [runId]
+        );
+
+        if (runRes.rowCount === 0) {
+          socket.write('HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nPipeline run not found');
+          socket.destroy();
+          return;
+        }
+
+        const { project_id, owner_id } = runRes.rows[0];
+        if (owner_id !== userId) {
+          const pmRes = await query('SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2', [
+            project_id,
+            userId,
+          ]);
+
+          if (!pmRes.rowCount || pmRes.rowCount === 0) {
+            socket.write(
+              'HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nForbidden. You are not authorized to view logs for this pipeline run.'
+            );
+            socket.destroy();
+            return;
+          }
+        }
+      }
+
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
       return;
     }
   } catch (err) {
-    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid or expired authentication token');
+    socket.write(
+      'HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid or expired authentication token'
+    );
     socket.destroy();
     return;
   }
 });
-
-// Middleware
-const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
-app.use(cors({
-  origin: [allowedOrigin, 'http://localhost', 'http://localhost:80', 'http://localhost:5173'],
-  credentials: true,
-}));
-app.use(express.json({ limit: '2mb' }));
 
 // Security Rate Limiting
 const globalLimiter = rateLimit({
@@ -194,15 +270,23 @@ const globalLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Too many requests from this IP address, please try again later.' }
+  message: { message: 'Too many requests from this IP address, please try again later.' },
 });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20, // Stricter limit for authentication endpoints
+  max: 10, // Stricter limit for authentication endpoints
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Too many authentication attempts. Please try again after 15 minutes.' }
+  message: { message: 'Too many authentication attempts. Please try again after 15 minutes.' },
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20, // Dedicated limit for expensive AI endpoints
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many AI requests. Please try again after 15 minutes.' },
 });
 
 app.use('/api/', globalLimiter);
@@ -210,6 +294,7 @@ app.use('/api/v1/auth/login', authLimiter);
 app.use('/api/v1/auth/register', authLimiter);
 app.use('/api/v1/auth/forgot-password', authLimiter);
 app.use('/api/v1/auth/reset-password', authLimiter);
+app.use('/api/v1/ai/', aiLimiter);
 
 // Root Welcome Endpoint
 app.get('/', (_req, res) => {

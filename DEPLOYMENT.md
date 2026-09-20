@@ -29,18 +29,33 @@ NODE_ENV=production
 DB_HOST=postgres
 DB_PORT=5432
 DB_USER=postgres
-DB_PASSWORD=SecurePostgresPass2026!
+DB_PASSWORD=<GENERATE_RANDOM_PASSWORD>
+DB_APP_USER=deploymate_app
+DB_APP_PASSWORD=<GENERATE_RANDOM_PASSWORD>
 DB_NAME=deploymate
 
 # Security & Initial Credentials
-JWT_SECRET=super-secret-jwt-key-minimum-32-chars-length
-INITIAL_ADMIN_EMAIL=admin@company.com
-INITIAL_ADMIN_PASSWORD=ComplexAdminPass123!
-FRONTEND_URL=http://your-ec2-ip-or-domain.com
+JWT_SECRET=<GENERATE_RANDOM_SECRET>
+INITIAL_ADMIN_EMAIL=admin@your-company.com
+INITIAL_ADMIN_PASSWORD=<GENERATE_RANDOM_PASSWORD>
+FRONTEND_URL=https://deploymate.example.com
 
 # AI Microservice Configuration
 AI_SERVICE_URL=http://ai-module:8000
-GEMINI_API_KEY=your_production_gemini_api_key
+GEMINI_API_KEY=<YOUR_GEMINI_API_KEY>
+```
+
+### Generate Random Production Secrets
+Run the following shell commands to generate secure random secrets for `.env`:
+```bash
+# Generate DB_PASSWORD and DB_APP_PASSWORD
+openssl rand -hex 24
+
+# Generate JWT_SECRET
+openssl rand -hex 32
+
+# Generate INITIAL_ADMIN_PASSWORD
+openssl rand -base64 24
 ```
 
 ---

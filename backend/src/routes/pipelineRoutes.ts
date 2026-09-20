@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { listPipelines, createPipeline, runPipeline, listPipelineRuns, getPipelineRun } from '../controllers/pipelineController';
-import { authenticateToken, authorize } from '../middleware/auth';
+import { authenticateToken, authorize, requireProjectAccess } from '../middleware/auth';
 
 const router = Router();
 
@@ -9,8 +9,9 @@ router.use(authenticateToken);
 
 router.get('/', authorize('pipelines', 'read'), listPipelines);
 router.post('/', authorize('pipelines', 'create'), createPipeline);
-router.post('/:pipelineId/run', authorize('pipelines', 'run'), runPipeline);
+router.post('/:pipelineId/run', authorize('pipelines', 'run'), requireProjectAccess, runPipeline);
 router.get('/runs', authorize('pipelines', 'read'), listPipelineRuns);
-router.get('/runs/:runId', authorize('pipelines', 'read'), getPipelineRun);
+router.get('/runs/:runId', authorize('pipelines', 'read'), requireProjectAccess, getPipelineRun);
 
 export default router;
+

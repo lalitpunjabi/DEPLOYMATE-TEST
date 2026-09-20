@@ -15,7 +15,13 @@ if [ ! -f "${BACKUP_FILE}" ]; then
   exit 1
 fi
 
-echo "[DEPLOYMATE DB Restore] Restoring database from snapshot: ${BACKUP_FILE}..."
+if [ -f "${BACKUP_FILE}.sha256" ] && command -v sha256sum >/dev/null 2>&1; then
+  echo "[DEPLOYMATE DB Restore] Verifying checksum..."
+  sha256sum -c "${BACKUP_FILE}.sha256"
+  echo "[DEPLOYMATE DB Restore] Checksum verified cleanly."
+fi
+
+echo "[DEPLOYMATE DB Restore] Restoring database snapshot: ${BACKUP_FILE}..."
 
 gunzip -c "${BACKUP_FILE}" | docker exec -i deploymate-db-prod psql -U "${DB_USER:-postgres}" postgres
 
