@@ -82,3 +82,15 @@ Developers log in and set up projects or register remote Kubernetes namespaces. 
 Upon passing gates, the **GitOps Module** reconciles git configurations with active deployments, rendering running pods inside the **Kubernetes Topology Map**. Concurrently, cloud infrastructure is provisioned through the database-locked **Terraform IaC Module**.
 
 The platform continuously monitors telemetry metrics. If SLI metrics degrade or error budget burn rate spikes (>14.2x), DEPLOYMATE automatically opens P1 incident tickets, initiates self-healing restarts, and invokes the **AIOps Engine** (powered by Gemini) to return structured JSON diagnostics with correlated evidence. Operator approval via the **Human-in-the-Loop Modal** authorizes automated remediation and generates markdown postmortems.
+
+---
+
+## 7. Sub-Module Documentation Index
+
+- **Main Platform README**: [`README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/README.md)
+- **React Frontend Console**: [`frontend/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/frontend/README.md)
+- **Backend Control Plane API**: [`backend/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/backend/README.md)
+- **FastAPI AI Microservice**: [`ai-module/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/ai-module/README.md)
+- **Developer Terminal CLI (`dmate`)**: [`cli/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/cli/README.md)
+- **Kubernetes Helm Chart**: [`helm/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/helm/README.md)
+

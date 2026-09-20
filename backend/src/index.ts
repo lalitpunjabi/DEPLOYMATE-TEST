@@ -197,7 +197,17 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   });
 });
 
+// Process exception handlers
+process.on('uncaughtException', (err) => {
+  console.error('[DEPLOYMATE BACKEND] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[DEPLOYMATE BACKEND] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 const PORT = parseInt(process.env.PORT || '5000', 10);
 server.listen(PORT, () => {
   console.log(`DEPLOYMATE Platform Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });
+

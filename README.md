@@ -218,9 +218,16 @@ To demonstrate DEPLOYMATE in a technical evaluation or viva:
 
 ---
 
-## 6. Troubleshooting & Health Checks
+---
 
-- **Platform Health Endpoint**: `GET http://localhost:5000/health`
-- **Database Readiness Endpoint**: `GET http://localhost:5000/ready`
-- **Prometheus Metrics Endpoint**: `GET http://localhost:5000/metrics`
-- **AI Microservice Health**: `GET http://localhost:8000/health`
+## 7. Sub-Module Documentation Index
+
+For detailed subsystem architecture, API routes, CLI flags, and component setup, refer to the module-specific documentation:
+
+* 💻 **React Frontend Console**: [`frontend/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/frontend/README.md)
+* ⚙️ **Backend Control Plane API**: [`backend/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/backend/README.md)
+* 🤖 **FastAPI AI Microservice**: [`ai-module/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/ai-module/README.md)
+* 🛠️ **Developer Terminal CLI (`dmate`)**: [`cli/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/cli/README.md)
+* ☸️ **Kubernetes Helm Chart**: [`helm/README.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/helm/README.md)
+* 📑 **Project Synopsis (Major Project Spec)**: [`deploymate_synopsis.md`](file:///c:/Users/Lalit%20Punjabi/DEPLOYMATE-TEST/deploymate_synopsis.md)
+

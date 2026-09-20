@@ -82,7 +82,7 @@ program
   .command('ai-diagnose')
   .description('Invoke Gemini AIOps Engine to diagnose pipeline or app logs')
   .requiredOption('-l, --logs <string>', 'Log string or trace to diagnose')
-  .action(async (options) => {
+  .action(async (options: { logs: string }) => {
     try {
       console.log('\nInvoking Gemini AIOps Engine for log diagnosis...\n');
       const res = await axios.post(`${AI_SERVICE_URL}/api/v1/ai/pipeline-failure-analysis`, {
@@ -93,15 +93,29 @@ program
       console.log('             GEMINI AI DIAGNOSTIC REPORT                     ');
       console.log('=============================================================');
       console.log(`Root Cause  : ${res.data.root_cause}`);
-      console.log(`Confidence  : ${(res.data.confidence * 100).toFixed(1)}%`);
+      console.log(`Confidence  : ${typeof res.data.confidence === 'number' ? (res.data.confidence * 100).toFixed(1) : '100'}%`);
       console.log(`Risk Level  : ${res.data.risk}`);
       console.log(`Evidence    :`);
       (res.data.evidence || []).forEach((e: string) => console.log(`  - ${e}`));
-      console.log(`Fix Suggestion:\n${res.data.suggested_fixes || res.data.recommendations?.join('\n')}`);
+      console.log(`Fix Suggestion:\n${res.data.suggested_fixes || (Array.isArray(res.data.recommendations) ? res.data.recommendations.join('\n') : res.data.recommendations)}`);
       console.log('=============================================================\n');
     } catch (err: any) {
       console.error(`AI Diagnosis failed: ${err.message}`);
     }
   });
 
+// Command 5: dmate config
+program
+  .command('config')
+  .description('Show active CLI environment configuration endpoints')
+  .action(() => {
+    console.log('\n=============================================================');
+    console.log('           DEPLOYMATE CLI ENVIRONMENT CONFIG                 ');
+    console.log('=============================================================');
+    console.log(`Backend API Gateway URL : ${BACKEND_URL}`);
+    console.log(`AI Engine Service URL   : ${AI_SERVICE_URL}`);
+    console.log('=============================================================\n');
+  });
+
 program.parse(process.argv);
+

@@ -130,6 +130,7 @@ def analyze_pipeline_failure(data: LogInput):
         "  \"confidence\": number (0.0 to 1.0),\n"
         "  \"evidence\": [string],\n"
         "  \"recommendations\": [string],\n"
+        "  \"suggested_fixes\": string,\n"
         "  \"risk\": \"LOW\" | \"MEDIUM\" | \"HIGH\",\n"
         "  \"requiresApproval\": boolean\n"
         "}"
@@ -138,13 +139,18 @@ def analyze_pipeline_failure(data: LogInput):
     
     try:
         raw_result = ask_gemini(prompt, system_instruction=system_prompt, response_json=True)
-        return json.loads(raw_result)
+        res = json.loads(raw_result)
+        if "suggested_fixes" not in res:
+            recs = res.get("recommendations", [])
+            res["suggested_fixes"] = "\n".join(recs) if isinstance(recs, list) else str(recs)
+        return res
     except Exception as e:
         return {
             "root_cause": "Build failure detected during stage execution.",
             "confidence": 0.85,
             "evidence": ["Log failure traceback detected in pipeline execution."],
             "recommendations": ["Inspect step logs and retry pipeline run."],
+            "suggested_fixes": "1. Inspect step logs for details.\n2. Retry pipeline execution.",
             "risk": "LOW",
             "requiresApproval": False
         }
