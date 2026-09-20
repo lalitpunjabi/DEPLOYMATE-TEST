@@ -20,10 +20,10 @@ This document contains the official project synopsis for **DEPLOYMATE** (Enterpr
 ### Front End / Back End Technology Used:
 
 * **FRONT END:** ReactJS (React 19), Tailwind CSS v4, Vite, TypeScript, Lucide Icons, Recharts (`[Implemented]`)
-* **BACK END:** Express.js (TypeScript/Node.js), Python + FastAPI, WebSockets (`ws`), Nodemailer (`[Implemented]`)
-* **DATABASE:** PostgreSQL with versioned SQL migrations (`001_init_schema.sql`, `schema_migrations` tracking) (`[Implemented]`)
-* **CLOUD & INFRASTRUCTURE:** Kubernetes API (`@kubernetes/client-node` / `SIMULATION` mode toggle), Terraform HCL Engine, ArgoCD Reconciler Emulator (`[Implemented / Simulation Mode Support]`)
-* **CONTAINERIZATION & PLATFORM:** Multi-stage Dockerfiles, Docker Compose, Kubernetes Helm Chart (`helm/`), GitHub Actions Dogfood CI (`[Implemented]`)
+* **BACK END:** Express.js (TypeScript/Node.js), Python + FastAPI, WebSockets (`ws` with single-use tickets `POST /api/v1/auth/ws-ticket`), Nodemailer (`[Implemented]`)
+* **DATABASE:** PostgreSQL with separated versioned SQL migrations (`db:init`, `db:migrate`, `db:seed`, `webhook_deliveries` replay protection table) (`[Implemented]`)
+* **CLOUD & INFRASTRUCTURE:** Kubernetes API (`@kubernetes/client-node` / `SIMULATION` mode toggle `execution_mode: "SIMULATED"`), Terraform HCL Engine, ArgoCD Reconciler Emulator (`[Implemented / Simulation Mode Support]`)
+* **CONTAINERIZATION & PLATFORM:** Multi-stage Dockerfiles, Docker Compose, Production HTTPS stack (`docker-compose.prod.yml`), Kubernetes Helm Chart (`helm/`), GitHub Actions Dogfood CI (`[Implemented]`)
 
 ---
 

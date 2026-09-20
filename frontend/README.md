@@ -51,7 +51,8 @@ frontend/
 
 ## 2. Key Capabilities & Status Matrix
 
-- **Infrastructure Mode Switcher (`Navbar.tsx`)**: Toggle between `REAL CLUSTER` (Kubernetes API connection) and `SIMULATION MODE`. `[Implemented]`
+- **Infrastructure Mode Switcher (`Navbar.tsx`)**: Toggle between `REAL CLUSTER` (Kubernetes API connection) and `SIMULATION MODE` (`execution_mode: "SIMULATED"`). `[Implemented]`
+- **WebSocket Single-Use Ticket Authorization**: Interactive terminal and log components pre-fetch 60-second single-use tickets (`POST /api/v1/auth/ws-ticket`) prior to establishing WebSocket upgrades (`/ws/terminal`, `/ws/logs`). `[Implemented]`
 - **Human-in-the-Loop Security Approval (`ApprovalModal.tsx`)**: Interactive approval modal requiring operator authorization before executing high-risk AI remediations. `[Implemented]`
 - **Compliance Audit Log Stream (`AuditLogs.tsx`)**: Operational log viewer with real-time text search and resource category filters (`INFRASTRUCTURE`, `DEPLOYMENT`, `AIOps`, `SECURITY`). `[Implemented]`
 - **Progressive Delivery Controls (`Deployments.tsx`)**: Interactive Canary traffic split sliders (10% → 100%) and Blue-Green router color swap toggles. `[Implemented]`

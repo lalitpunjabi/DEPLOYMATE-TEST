@@ -22,16 +22,19 @@ The **DEPLOYMATE AI Microservice** provides intelligent AIOps capabilities to th
 
 ---
 
-## 2. Environment Setup
+## 2. Environment Setup & Internal Security
 
 Create `.env` inside `ai-module/`:
 
 ```env
 PORT=8000
 GEMINI_API_KEY=<your_gemini_api_key_here>
+AI_INTERNAL_TOKEN=<your_internal_service_token>
 ```
 
-> **Note:** If `GEMINI_API_KEY` is omitted or empty, the microservice gracefully operates in **SIMULATOR mode**, returning pre-cached structured SRE diagnostic outputs without throwing errors.
+> **Security Note:** In production, requests to `/api/v1/ai/*` must present an `X-Internal-Token` header matching `AI_INTERNAL_TOKEN`. Requests missing or with invalid internal tokens fail closed with HTTP 403 Forbidden.
+>
+> **Simulator Fallback:** If `GEMINI_API_KEY` is omitted or empty, the microservice gracefully operates in **SIMULATOR mode**, returning pre-cached structured SRE diagnostic outputs without throwing errors.
 
 ---
 

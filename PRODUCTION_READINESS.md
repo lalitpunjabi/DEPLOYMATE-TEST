@@ -34,6 +34,11 @@ This document certifies that the **DEPLOYMATE** Cloud Operations & DevSecOps Con
 | **22. Security Regression Tests** | Automated test suite verifying hashing, path traversal, SSRF, command injection, role forcing, HMAC verification, secret scrubbing, IDOR isolation, AI internal tokens, and AI PR validation. | `IMPLEMENTED & VERIFIED` | `backend/src/__tests__/security.test.ts`: Automated regression test suite passed cleanly (11/11 tests passed). |
 | **23. Safe Deployment Docs** | Remove static reusable passwords from `DEPLOYMENT.md` and `.env.example`. | `IMPLEMENTED & VERIFIED` | `DEPLOYMENT.md` and `.env.example`: Updated with `<GENERATE_RANDOM_PASSWORD>` and secret generation scripts. |
 | **24. Backup & Restoration** | Database backup snapshot and restoration scripts with SHA-256 checksum verification. | `IMPLEMENTED & VERIFIED` | `scripts/backup_db.sh` and `scripts/restore_db.sh` updated with checksum generation and verification. |
+| **25. Single-Use WebSocket Tickets** | Short-lived 60-second single-use tickets (`POST /api/v1/auth/ws-ticket`) for safe `/ws/logs` and `/ws/terminal` upgrades without query string JWT leaks. | `IMPLEMENTED & VERIFIED` | `authController.ts` & `index.ts`: Ticket flow verified in test suite. Unmapped or ambiguous namespaces fail closed. |
+| **26. DB Webhook Replay Protection** | Persistent database-backed `webhook_deliveries` table tracking `X-GitHub-Delivery` with atomic SQL deduplication (`ON CONFLICT DO NOTHING`). | `IMPLEMENTED & VERIFIED` | `002_security_sessions_reset.sql` & `webhookController.ts`: Validated in automated test suite. Duplicates return HTTP 200 IGNORED without pipeline execution. |
+| **27. Simulation Mode Labelling** | Non-live infrastructure controllers explicitly tag responses with `execution_mode: "SIMULATED"` and scrub fabricated AWS IDs. | `IMPLEMENTED & VERIFIED` | `terraformController.ts`, `gitopsController.ts`, `chaosController.ts`, `logsController.ts`: Honest simulation mode labeling verified across all endpoints. |
+| **28. DB Init/Migrate/Seed Separation** | Decouple database initialization, versioned SQL migrations, and RBAC seeding into dedicated scripts (`db:init`, `db:migrate`, `db:seed`). | `IMPLEMENTED & VERIFIED` | `backend/package.json`: Prevents automatic schema creation or seeding during application startup in production. |
+| **29. Dependency Vulnerability Posture** | Audit dependencies to ensure zero high/moderate security vulnerabilities (`npm audit`). | `IMPLEMENTED & VERIFIED` | `backend/package.json`: Upgraded `nodemailer` to `@latest` (`v10.0.10`). `npm audit` reports **0 vulnerabilities**. |
 
 ---
 
@@ -47,17 +52,19 @@ This document certifies that the **DEPLOYMATE** Cloud Operations & DevSecOps Con
 ✅ Test 4 Passed: Advanced SSRF (IPv6 / Mapped / Alternate Formats)
 ✅ Test 5 Passed: Command Execution Safety (No Shell Concatenation)
 ✅ Test 6 Passed: Privilege Escalation Prevention (Role Forcing)
-✅ Test 7 Passed: Fail-Closed Constant-Time HMAC SHA-256 Verification
+✅ Test 7 Passed: Fail-Closed Constant-Time HMAC SHA-256 Verification & Database Replay Protection
 ✅ Test 8 Passed: Webhook Secret Sanitization
-✅ Test 9 Passed: Multi-Tenant IDOR Project Isolation
+✅ Test 9 Passed: Multi-Tenant IDOR Project Isolation (Terraform, GitOps, Chaos, Logs)
 ✅ Test 10 Passed: Internal AI Service Token Gate
 ✅ Test 11 Passed: AI PR Fix Path Traversal & Size Bounds Validation
+✅ Test 12 Passed: Short-Lived Single-Use WebSocket Ticket Issuance and Upgrade Validation
 [Security Suite] ALL REGRESSION TESTS PASSED CLEANLY.
 ```
 
-- **Frontend Production Build**: `npm run build` in `frontend/` passed cleanly (**911ms**).
-- **CLI Production Build**: `npm run build` in `cli/` passed cleanly (**Exit Code 0**).
 - **Backend TypeScript Compilation**: `npx tsc --noEmit` in `backend/` passed cleanly (**Exit Code 0**).
+- **Backend Dependency Audit**: `npm audit` in `backend/` passed cleanly (**0 vulnerabilities**).
+- **Frontend Production Build**: `npm run build` in `frontend/` passed cleanly (**740ms**).
+- **CLI Production Build**: `npm run build` in `cli/` passed cleanly (**Exit Code 0**).
 - **AI Microservice Compilation**: `python -m py_compile main.py` in `ai-module/` passed cleanly (**Exit Code 0**).
 - **Docker Compose Configuration**: `docker compose -f docker-compose.prod.yml config` passed cleanly (**Exit Code 0**).
 

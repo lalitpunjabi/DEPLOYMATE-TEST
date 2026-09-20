@@ -40,8 +40,10 @@ INITIAL_ADMIN_EMAIL=admin@your-company.com
 INITIAL_ADMIN_PASSWORD=<GENERATE_RANDOM_PASSWORD>
 FRONTEND_URL=https://deploymate.example.com
 
-# AI Microservice Configuration
+# AI Microservice & Security Configuration
 AI_SERVICE_URL=http://ai-module:8000
+AI_INTERNAL_TOKEN=<GENERATE_RANDOM_SECRET>
+GITHUB_WEBHOOK_SECRET=<GENERATE_RANDOM_SECRET>
 GEMINI_API_KEY=<YOUR_GEMINI_API_KEY>
 ```
 
@@ -51,7 +53,7 @@ Run the following shell commands to generate secure random secrets for `.env`:
 # Generate DB_PASSWORD and DB_APP_PASSWORD
 openssl rand -hex 24
 
-# Generate JWT_SECRET
+# Generate JWT_SECRET, AI_INTERNAL_TOKEN, and GITHUB_WEBHOOK_SECRET
 openssl rand -hex 32
 
 # Generate INITIAL_ADMIN_PASSWORD
@@ -68,24 +70,37 @@ git clone https://github.com/lalitpunjabi/DEPLOYMATE-TEST.git
 cd DEPLOYMATE-TEST
 ```
 
-### Step 2: Launch Production Stack
+### Step 2: Configure TLS Certificates (HTTPS)
+Place valid TLS certificates in `/etc/nginx/certs/`:
+- `/etc/nginx/certs/fullchain.pem`
+- `/etc/nginx/certs/privkey.pem`
+
+### Step 3: Launch Production Stack
 ```bash
 docker compose -f docker-compose.prod.yml up --build -d
 ```
 
-### Step 3: Run Database Migrations & Initial Seed
+### Step 4: Run Database Initialization, Migrations & Initial Seed
+Execute the decoupled database scripts:
 ```bash
-docker exec -t deploymate-backend-prod npx ts-node src/config/initDb.ts
+# Run database schema initialization
+docker exec -t deploymate-backend-prod npm run db:init
+
+# Run versioned SQL migrations (001_init_schema.sql, 002_security_sessions_reset.sql)
+docker exec -t deploymate-backend-prod npm run db:migrate
+
+# Seed RBAC roles and initial Super Admin account
+docker exec -t deploymate-backend-prod npm run db:seed
 ```
 
 ---
 
 ## 4. Verification & Health Monitoring
 
-- **Frontend Portal**: `http://<EC2_PUBLIC_IP>/`
-- **Health Endpoint**: `curl http://<EC2_PUBLIC_IP>/api/v1/health`
-- **Database Readiness**: `curl http://<EC2_PUBLIC_IP>/api/v1/ready`
-- **Prometheus Operational Metrics**: `curl http://<EC2_PUBLIC_IP>/api/v1/metrics`
+- **Frontend Portal**: `https://<EC2_PUBLIC_IP>/` (or `http://<EC2_PUBLIC_IP>/` for automatic 301 HTTPS redirect)
+- **Health Endpoint**: `curl https://<EC2_PUBLIC_IP>/api/v1/health`
+- **Database Readiness**: `curl https://<EC2_PUBLIC_IP>/api/v1/ready`
+- **Prometheus Operational Metrics**: `curl https://<EC2_PUBLIC_IP>/api/v1/metrics`
 
 ---
 

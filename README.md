@@ -75,11 +75,11 @@ Git Commit → CI/CD Engine → Unit Tests → DevSecOps Gates (Trivy/Sonar) →
 
 ### Stack Components:
 * **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, Lucide Icons, Recharts, custom dark glassmorphic styling engine. `[Implemented]`
-* **Backend:** Node.js, Express.js, TypeScript, PostgreSQL (`pg`), Nodemailer (Email Alerts), `ws` (WebSockets). `[Implemented]`
-* **AI Module:** Python 3.11+, FastAPI, Google GenAI SDK (`gemini-1.5-flash`), structured JSON outputs. `[Implemented]`
-* **Infrastructure Layer:** `@kubernetes/client-node` API (`REAL` mode) + Fallback `SIMULATION` mode toggle, Terraform HCL Engine, ArgoCD Reconciler. `[Implemented / Simulation Mode Support]`
-* **Database & Migrations:** PostgreSQL with versioned SQL migrations (`001_init_schema.sql`, `schema_migrations` tracking table). `[Implemented]`
-* **Platform Operations:** `docker-compose.yml`, Helm Chart (`helm/`), `/metrics` self-observability, GitHub Actions dogfood CI pipeline. `[Implemented]`
+* **Backend:** Node.js, Express.js, TypeScript, PostgreSQL (`pg`), Nodemailer (Email Alerts), `ws` (WebSockets with short-lived ticket auth). `[Implemented]`
+* **AI Module:** Python 3.11+, FastAPI, Google GenAI SDK (`gemini-1.5-flash`), structured JSON outputs, `AI_INTERNAL_TOKEN` security gate. `[Implemented]`
+* **Infrastructure Layer:** `@kubernetes/client-node` API (`REAL` mode) + Explicit `SIMULATION` mode (`execution_mode: "SIMULATED"`), Terraform HCL Engine, ArgoCD Reconciler. `[Implemented / Simulation Mode Support]`
+* **Database & Migrations:** PostgreSQL with separated versioned SQL migrations (`db:init`, `db:migrate`, `db:seed`, `webhook_deliveries` tracking). `[Implemented]`
+* **Platform Operations:** `docker-compose.yml`, Production Docker stack (`docker-compose.prod.yml`), Helm Chart (`helm/`), `/metrics` self-observability, GitHub Actions dogfood CI pipeline. `[Implemented]`
 
 ---
 
@@ -87,24 +87,24 @@ Git Commit → CI/CD Engine → Unit Tests → DevSecOps Gates (Trivy/Sonar) →
 
 | Module | Status | Capability Description |
 | :--- | :---: | :--- |
-| **Authentication & RBAC** | `Implemented` | JWT access tokens, password hashing via bcrypt, granular permission-based authorization (`pipeline.execute`, `deployment.rollback`, `terraform.apply`, `chaos.execute`, `security.override`, `ai.remediation.approve`). |
+| **Authentication & RBAC** | `Implemented` | JWT access tokens, password hashing via bcrypt, granular permission-based authorization (`pipeline.execute`, `deployment.rollback`, `terraform.apply`, `chaos.execute`, `security.override`, `ai.remediation.approve`), and short-lived single-use WebSocket tickets (`POST /api/v1/auth/ws-ticket`). |
 | **Audit Logging** | `Implemented` | Full compliance audit stream recording user ID, action, resource, timestamp, IP address, and JSON details with filtering in `/audit-logs`. |
 | **CI/CD Pipeline Engine** | `Implemented` | Declarative YAML pipelines, stage duration tracking, WebSocket log streaming, artifact execution, and failure recovery. |
 | **DevSecOps Security Gates** | `Implemented` | Automated gating evaluating Trivy container CVE counts (Critical/High) and SonarQube quality ratings persisted in `security_gate_policies`. |
-| **Kubernetes Integration** | `Implemented` | Cluster topology visualizer (`Services ──► Deployments ──► Pods`) supporting both `REAL` KubeConfig connections and `SIMULATION` modes. |
+| **Kubernetes Integration** | `Implemented` | Cluster topology visualizer (`Services ──► Deployments ──► Pods`) supporting both `REAL` KubeConfig connections and `SIMULATION` modes (`execution_mode: "SIMULATED"`). |
 | **Progressive Delivery** | `Implemented` | Interactive Canary traffic allocation (10% → 50% → 100%) and Blue-Green router swapping with active revision state persistence. |
-| **GitOps Reconciler** | `Implemented` | Desired-vs-Live spec comparison, drift diff visualization, and manual/automated reconciliation triggers. |
-| **Terraform IaC Runner** | `Implemented` | HCL code generation via AI, dry-run plan logging, static security policy checks (blocking `0.0.0.0/0` SSH access), and state locking. |
+| **GitOps Reconciler** | `Implemented` | Desired-vs-Live spec comparison, drift diff visualization, and manual/automated reconciliation triggers (`execution_mode: "SIMULATED"`). |
+| **Terraform IaC Runner** | `Implemented` | HCL code generation via AI, dry-run plan logging, static security policy checks (blocking `0.0.0.0/0` SSH access), and state locking (`execution_mode: "SIMULATED"`). |
 | **Observability & SRE** | `Implemented` | SLI/SLO calculations (Availability %, Latency p95/p99, Error Budget, Burn Rate) with automated P1 incident ticketing on burn rate spikes (>14.2x). |
 | **AIOps & Co-Pilot** | `Implemented` | Gemini-powered structured JSON diagnosis with empirical evidence lists, confidence ratings (%), risk scores, markdown postmortems, and **GitHub Auto-Fix PR Creation**. |
 | **FinOps Cloud Optimizer** | `Implemented` | Real-time pod request vs usage analysis, monthly USD cost calculations, and actionable downsizing cost-saving recommendations. |
 | **OPA Policy-as-Code** | `Implemented` | Enterprise policy engine evaluating Kubernetes YAML & Terraform HCL against 6 compliance rules (`POL-001` to `POL-006`). |
-| **In-Browser Pod Terminal** | `Implemented` | Interactive WebSocket shell terminal (`/ws/terminal`) for container command execution (`ls`, `ps`, `top`, `env`, `exit`). |
-| **GitHub Webhook Ingestion** | `Implemented` | HMAC SHA256 validated webhook listener (`/api/v1/webhooks/github`) triggering automated CI/CD runs on `git push`. |
+| **In-Browser Pod Terminal** | `Implemented` | Interactive WebSocket shell terminal (`/ws/terminal`) with short-lived ticket authorization for container command execution (`ls`, `ps`, `top`, `env`, `exit`). |
+| **GitHub Webhook Ingestion** | `Implemented` | Raw-body HMAC SHA256 validated webhook listener (`/api/v1/webhooks/github`) with persistent PostgreSQL replay protection (`X-GitHub-Delivery`). |
 | **`dmate` Developer CLI** | `Implemented` | Command-line developer tool (`cli/dmate.ts`) for checking platform status, triggering pipelines, and running terminal AI diagnostics. |
 | **Human-in-the-Loop Gate** | `Implemented` | Approval modal (`ApprovalModal.tsx`) requiring explicit operator confirmation before executing high-risk AI remediations or infrastructure mutations. |
-| **Resilience Lab (Chaos)** | `Implemented` | Targeted failure injections (`POD_KILL`, `CPU_STRESS`, `NETWORK_DELAY`) with safety limits (max 300s duration, namespace checks) and dynamic resilience scoring. |
-| **Platform Engineering** | `Implemented` | Multi-stage Dockerfiles, `docker-compose.yml`, Kubernetes Helm chart (`helm/`), self-observability (`/health`, `/ready`, `/metrics`), and dogfood GitHub Actions CI. |
+| **Resilience Lab (Chaos)** | `Implemented` | Targeted failure injections (`POD_KILL`, `CPU_STRESS`, `NETWORK_DELAY`) with safety limits (max 300s duration, namespace checks) and dynamic resilience scoring (`execution_mode: "SIMULATED"`). |
+| **Platform Engineering** | `Implemented` | Multi-stage Dockerfiles, `docker-compose.yml`, production HTTPS stack (`docker-compose.prod.yml`), Kubernetes Helm chart (`helm/`), self-observability (`/health`, `/ready`, `/metrics`), and dogfood GitHub Actions CI. |
 
 ---
 
@@ -125,10 +125,13 @@ DB_PASSWORD=<your_postgres_password>
 DB_NAME=deploymate
 JWT_SECRET=<your_secure_jwt_secret>
 AI_SERVICE_URL=http://localhost:8000
+AI_INTERNAL_TOKEN=<your_internal_service_token>
+GITHUB_WEBHOOK_SECRET=<your_webhook_secret>
 
 # AI Microservice (ai-module/.env)
 PORT=8000
 GEMINI_API_KEY=<your_gemini_api_key>
+AI_INTERNAL_TOKEN=<your_internal_service_token>
 ```
 
 > [!CAUTION]
@@ -147,7 +150,7 @@ docker compose up --build
 ```
 
 **Automated Orchestration Features:**
-- **Automated Database Initialization**: Automatically runs SQL migrations (`001_init_schema.sql`), creates database tables, seeds RBAC roles (`Super Admin`, `DevOps Engineer`, `Developer`, `Viewer`), and initializes default Super Admin credentials (`admin@deploymate.com` / `admin123`).
+- **Automated Database Initialization**: Automatically runs SQL migrations (`001_init_schema.sql`, `002_security_sessions_reset.sql`), creates database tables, seeds RBAC roles (`Super Admin`, `DevOps Engineer`, `Developer`, `Viewer`), and initializes default Super Admin credentials (`admin@deploymate.com` / `admin123`).
 - **Health-Checked Dependency Graph**: Backend waits for PostgreSQL container health checks, and Frontend waits for Backend readiness before launching.
 - **Single-Page Application Fallback**: Nginx configured with SPA routing so page refreshes and direct URLs work smoothly.
 
@@ -163,11 +166,19 @@ docker compose up --build
 
 If you prefer running services individually for code editing:
 
-1. **Database Migration & Initialization**:
+1. **Database Initialization, Migration & Seeding**:
    ```bash
    cd backend
    npm install
-   npx ts-node src/config/initDb.ts
+
+   # Initialize database
+   npm run db:init
+
+   # Run versioned SQL migrations
+   npm run db:migrate
+
+   # Seed initial RBAC roles & Super Admin user
+   npm run db:seed
    ```
 
 2. **Start Backend Control Plane**:

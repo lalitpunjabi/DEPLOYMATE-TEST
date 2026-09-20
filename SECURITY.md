@@ -23,10 +23,12 @@ This document details the security model, role-based access control (RBAC), sess
 
 ---
 
-## 3. WebSocket Handshake Security
+## 3. WebSocket Upgrade & Handshake Security
 
-- **`/ws/logs`**: Validates JWT token from query string parameter (`?token=...`) against active sessions before establishing log streaming connection.
-- **`/ws/terminal`**: Validates token AND verifies user role is `Super Admin` or `DevOps Engineer`. Unauthenticated or unauthorized upgrade requests receive `401 Unauthorized` or `403 Forbidden` HTTP responses.
+- **Short-Lived Single-Use Tickets (`POST /api/v1/auth/ws-ticket`)**: Authenticated clients request a 60-second single-use ticket before initiating a WebSocket upgrade. This avoids passing long-lived JWTs in URL query strings.
+- **Fail-Closed Authorization**:
+  - **`/ws/logs`**: Validates the WebSocket ticket and verifies that the `runId` maps directly to a project owned by or accessible to the user.
+  - **`/ws/terminal`**: Validates ticket, verifies user role is `Super Admin` or `DevOps Engineer`, and verifies namespace mapping via `SELECT DISTINCT project_id FROM deployments WHERE namespace = $1`. Ambiguous or unmapped namespaces fail closed with HTTP 403.
 
 ---
 
@@ -40,13 +42,15 @@ This document details the security model, role-based access control (RBAC), sess
 
 ## 5. Webhook & AI Service Security
 
-- **Constant-Time HMAC SHA-256**: GitHub incoming webhooks on `/api/v1/webhooks/github` enforce `X-Hub-Signature-256` verification using `crypto.timingSafeEqual`. Production mode fails closed if `GITHUB_WEBHOOK_SECRET` is unconfigured.
-- **Webhook Secret Scrubbing**: Webhook secrets are scrubbed from project list and detail responses (`webhook_configured: boolean`).
-- **Internal AI Service Authentication**: FastAPI AI module requires `X-Internal-Token` matching `AI_INTERNAL_TOKEN` on all internal requests.
+- **Raw-Body Constant-Time HMAC SHA-256**: GitHub webhooks on `/api/v1/webhooks/github` calculate HMAC SHA-256 over raw HTTP request bytes before JSON parsing using `crypto.timingSafeEqual`.
+- **Persistent Database Replay Protection**: `X-GitHub-Delivery` header is checked against PostgreSQL `webhook_deliveries` with `INSERT ... ON CONFLICT DO NOTHING`. Replayed delivery IDs return HTTP 200 IGNORED without re-triggering CI pipelines.
+- **Deterministic Repository Mapping**: GitHub repos must match a single unique project mapping. Ambiguous repository URLs fail closed.
+- **Internal AI Service Authentication**: FastAPI AI module requires `X-Internal-Token` matching `AI_INTERNAL_TOKEN` on all internal requests. Requests missing or with invalid internal tokens fail closed.
 
 ---
 
 ## 6. Multi-Tenant Project Isolation & Error Sanitization
 
-- **Child Resource ID Resolution**: `requireProjectAccess` middleware resolves child resource IDs (`pipelineId`, `runId`, `deploymentId`, `stateId`, `incidentId`, `chaosId`, `scanId`) to `project_id` in database before checking membership.
-- **Sanitized Error Responses**: Production error handler (`sendSafeError`) hides internal stack traces and raw SQL messages, attaching `X-Request-ID` UUID correlation headers.
+- **Child Resource ID Resolution**: `requireProjectAccess` middleware resolves child resource IDs (`pipelineId`, `runId`, `deploymentId`, `stateId`, `incidentId`, `chaosId`, `scanId`) to `project_id` in database before checking membership across Terraform, GitOps, Chaos, and Logs controllers.
+- **Honest Simulation Labelling**: Non-live operations explicitly specify `execution_mode: "SIMULATED"` and scrub fabricated AWS or Kubernetes resource IDs.
+- **Sanitized Error Responses**: Production error handler (`sendSafeError`) hides internal stack traces, raw SQL messages, and system paths from client responses, attaching `X-Request-ID` UUID correlation headers for audit tracking.
