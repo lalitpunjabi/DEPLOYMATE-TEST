@@ -33,10 +33,15 @@ export const Register: React.FC = () => {
         body: JSON.stringify({ name, email, password, roleName }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        data = await response.json();
+      } catch {
+        // Handle empty or non-JSON response bodies gracefully
+      }
 
       if (!response.ok) {
-        throw new Error(data.message || 'Registration failed.');
+        throw new Error(data.message || `Registration failed with status ${response.status}`);
       }
 
       setSuccess('Account created successfully! Redirecting to login...');

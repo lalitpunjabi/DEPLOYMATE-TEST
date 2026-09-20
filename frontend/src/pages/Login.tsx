@@ -32,10 +32,15 @@ export const Login: React.FC = () => {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        data = await response.json();
+      } catch {
+        // Handle empty or non-JSON response bodies gracefully
+      }
 
       if (!response.ok) {
-        throw new Error(data.message || 'Login failed.');
+        throw new Error(data.message || `Login failed with status ${response.status}`);
       }
 
       login(data.token, data.user);
