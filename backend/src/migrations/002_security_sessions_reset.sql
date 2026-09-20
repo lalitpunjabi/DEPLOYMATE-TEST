@@ -34,9 +34,19 @@ CREATE TABLE IF NOT EXISTS project_members (
   PRIMARY KEY (project_id, user_id)
 );
 
+-- Add artifact_hash column to remediation_approvals table if not exists
+ALTER TABLE remediation_approvals ADD COLUMN IF NOT EXISTS artifact_hash VARCHAR(255);
+
+-- Add project_id column to sre_incidents and chaos_experiments if not exists
+ALTER TABLE sre_incidents ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE CASCADE;
+ALTER TABLE chaos_experiments ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE CASCADE;
+
 -- Create indexes for fast lookup
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_reset_tokens_hash ON password_reset_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_sre_incidents_project ON sre_incidents(project_id);
+CREATE INDEX IF NOT EXISTS idx_chaos_experiments_project ON chaos_experiments(project_id);
+
 

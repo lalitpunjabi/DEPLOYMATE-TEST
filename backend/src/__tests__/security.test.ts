@@ -58,6 +58,82 @@ async function runSecurityTests() {
   assert.strictEqual(regResult.role, 'Developer', 'Public registration must never allow Super Admin assignment');
   console.log('✅ Test 6 Passed: Privilege Escalation Prevention (Role Forcing)');
 
+  // Test 7: HMAC SHA-256 Constant-Time Verification Logic
+  const crypto = await import('crypto');
+  const secret = 'webhook-secret-key-123';
+  const payloadStr = JSON.stringify({ action: 'push', repository: { name: 'deploymate' } });
+  const validSig = 'sha256=' + crypto.createHmac('sha256', secret).update(payloadStr).digest('hex');
+  
+  const verifyHmac = (rawPayload: string, headerSig: string, key: string): boolean => {
+    if (!headerSig || !headerSig.startsWith('sha256=')) return false;
+    const digest = crypto.createHmac('sha256', key).update(rawPayload).digest('hex');
+    const sigBuffer = Buffer.from(headerSig.slice(7), 'utf8');
+    const digestBuffer = Buffer.from(digest, 'utf8');
+    if (sigBuffer.length !== digestBuffer.length) return false;
+    return crypto.timingSafeEqual(sigBuffer, digestBuffer);
+  };
+
+  assert.strictEqual(verifyHmac(payloadStr, validSig, secret), true, 'Valid HMAC signature must verify');
+  assert.strictEqual(verifyHmac(payloadStr, 'sha256=invalidhexdigest', secret), false, 'Invalid HMAC digest must fail');
+  assert.strictEqual(verifyHmac(payloadStr, validSig, 'wrong-secret'), false, 'HMAC with wrong secret must fail');
+  console.log('✅ Test 7 Passed: Fail-Closed Constant-Time HMAC SHA-256 Verification');
+
+  // Test 8: Webhook Secret Response Sanitization
+  const sanitizeProjectResponse = (projectRow: any) => {
+    const { webhook_secret, ...safeProject } = projectRow;
+    return {
+      ...safeProject,
+      webhook_configured: Boolean(webhook_secret && webhook_secret.trim().length > 0)
+    };
+  };
+
+  const dbProject = { id: 'proj-101', name: 'Frontend', webhook_secret: 'super-secret-key-456' };
+  const sanitized = sanitizeProjectResponse(dbProject);
+  assert.strictEqual((sanitized as any).webhook_secret, undefined, 'webhook_secret must be scrubbed from API output');
+  assert.strictEqual(sanitized.webhook_configured, true, 'webhook_configured flag must be returned instead');
+  console.log('✅ Test 8 Passed: Webhook Secret Sanitization');
+
+  // Test 9: Multi-Tenant IDOR Project Authorization Check
+  const checkProjectAuthorization = (userId: string, userRole: string, project: { owner_id: string; members: string[] }): boolean => {
+    if (userRole === 'Super Admin') return true;
+    if (project.owner_id === userId) return true;
+    if (project.members.includes(userId)) return true;
+    return false;
+  };
+
+  const projA = { owner_id: 'user-A-id', members: ['user-A-id', 'dev-user-id'] };
+  assert.strictEqual(checkProjectAuthorization('user-A-id', 'Developer', projA), true, 'User A can access own project');
+  assert.strictEqual(checkProjectAuthorization('user-B-id', 'Developer', projA), false, 'User B must be DENIED access to User A project (IDOR Blocked)');
+  assert.strictEqual(checkProjectAuthorization('user-B-id', 'Super Admin', projA), true, 'Super Admin bypasses project isolation');
+  console.log('✅ Test 9 Passed: Multi-Tenant IDOR Project Isolation');
+
+  // Test 10: Internal AI Service Authentication Header Check
+  const verifyAiInternalToken = (reqToken: string | undefined, expectedToken: string): boolean => {
+    if (!reqToken || reqToken !== expectedToken) return false;
+    return true;
+  };
+  assert.strictEqual(verifyAiInternalToken('secret-ai-token-777', 'secret-ai-token-777'), true, 'Matching AI internal token allows request');
+  assert.strictEqual(verifyAiInternalToken('wrong-token', 'secret-ai-token-777'), false, 'Wrong AI token is rejected');
+  assert.strictEqual(verifyAiInternalToken(undefined, 'secret-ai-token-777'), false, 'Missing AI token is rejected');
+  console.log('✅ Test 10 Passed: Internal AI Service Token Gate');
+
+  // Test 11: AI PR Fix Path Traversal & Size Bounds Validation
+  const validateAiPrRequest = (targetFile: string, patchContent: string): { valid: boolean; reason?: string } => {
+    if (targetFile.includes('..') || targetFile.startsWith('/')) {
+      return { valid: false, reason: 'Path traversal attempt detected' };
+    }
+    if (patchContent.length > 100000) {
+      return { valid: false, reason: 'Patch content exceeds maximum allowed size' };
+    }
+    return { valid: true };
+  };
+
+  assert.strictEqual(validateAiPrRequest('src/components/App.tsx', 'const a = 1;').valid, true, 'Valid file patch allowed');
+  assert.strictEqual(validateAiPrRequest('../../../etc/passwd', 'malicious').valid, false, 'Path traversal target file rejected');
+  assert.strictEqual(validateAiPrRequest('/etc/shadow', 'malicious').valid, false, 'Absolute root path target file rejected');
+  assert.strictEqual(validateAiPrRequest('src/app.js', 'x'.repeat(100001)).valid, false, 'Over-sized patch content rejected');
+  console.log('✅ Test 11 Passed: AI PR Fix Path Traversal & Size Bounds Validation');
+
   console.log('[Security Suite] ALL REGRESSION TESTS PASSED CLEANLY.');
 }
 

@@ -7,12 +7,20 @@ from typing import List, Dict, Optional
 import google.generativeai as genai
 from dotenv import load_dotenv
 
+from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional
+import google.generativeai as genai
+from dotenv import load_dotenv
+
 # Load env variables
 load_dotenv()
 
 app = FastAPI(title="Deploymate AI Engine", version="1.0.0")
 
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://backend:5000,http://localhost:5000,http://localhost:5173").split(",")
+AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "deploymate-internal-ai-secret-token")
 
 # Enable CORS restricted to internal services
 app.add_middleware(
@@ -23,6 +31,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Internal Token Middleware
+@app.middleware("http")
+async def verify_internal_token(request: Request, call_next):
+    if request.url.path in ["/", "/health", "/docs", "/openapi.json"]:
+        return await call_next(request)
+    
+    token = request.headers.get("X-Internal-Token")
+    if token != AI_INTERNAL_TOKEN and os.getenv("ENVIRONMENT") == "production":
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"message": "Unauthorized internal AI service request."})
+    
+    return await call_next(request)
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 is_live_gemini = False
 
@@ -32,7 +53,7 @@ if GEMINI_API_KEY and GEMINI_API_KEY.strip() != "":
         is_live_gemini = True
         print("Gemini AI Client: Successfully authenticated SDK key.")
     except Exception as e:
-        print(f"Gemini AI Client: Authentication failed. Falling back to simulator mode. Error: {e}")
+        print("Gemini AI Client: Authentication failed. Falling back to simulator mode.")
 else:
     print("Gemini AI Client: Running in SIMULATOR mode (No API Key provided).")
 

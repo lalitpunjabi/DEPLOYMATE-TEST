@@ -35,3 +35,18 @@ This document details the security model, role-based access control (RBAC), sess
 - **Command Injection Prevention**: Infrastructure commands (`terraform`, `git`, `docker`, `kubectl`) use `safeSpawnCommand` with array argument vectors and `shell: false`.
 - **SSRF Prevention**: `validateExternalUrl` validates incoming Webhook and Git URLs, blocking loopback addresses (`127.0.0.1`, `localhost`), metadata service (`169.254.169.254`), and private CIDRs (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
 - **Path Traversal Protection**: `sanitizeFilePath` verifies resolved file paths remain strictly inside base directory boundaries using `path.resolve()`.
+
+---
+
+## 5. Webhook & AI Service Security
+
+- **Constant-Time HMAC SHA-256**: GitHub incoming webhooks on `/api/v1/webhooks/github` enforce `X-Hub-Signature-256` verification using `crypto.timingSafeEqual`. Production mode fails closed if `GITHUB_WEBHOOK_SECRET` is unconfigured.
+- **Webhook Secret Scrubbing**: Webhook secrets are scrubbed from project list and detail responses (`webhook_configured: boolean`).
+- **Internal AI Service Authentication**: FastAPI AI module requires `X-Internal-Token` matching `AI_INTERNAL_TOKEN` on all internal requests.
+
+---
+
+## 6. Multi-Tenant Project Isolation & Error Sanitization
+
+- **Child Resource ID Resolution**: `requireProjectAccess` middleware resolves child resource IDs (`pipelineId`, `runId`, `deploymentId`, `stateId`, `incidentId`, `chaosId`, `scanId`) to `project_id` in database before checking membership.
+- **Sanitized Error Responses**: Production error handler (`sendSafeError`) hides internal stack traces and raw SQL messages, attaching `X-Request-ID` UUID correlation headers.

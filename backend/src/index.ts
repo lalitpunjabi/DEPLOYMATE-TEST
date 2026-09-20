@@ -37,10 +37,11 @@ const server = http.createServer(app);
 // Enable proxy trust for Express when behind Nginx reverse proxy
 app.set('trust proxy', 1);
 
-// Request Correlation ID Middleware
+// Request Correlation ID Middleware with UUID Validation
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const existingReqId = req.headers['x-request-id'] as string;
-  const requestId = existingReqId || crypto.randomUUID();
+  const incomingReqId = req.headers['x-request-id'] as string;
+  const requestId = incomingReqId && UUID_REGEX.test(incomingReqId) ? incomingReqId : crypto.randomUUID();
   (req as any).id = requestId;
   res.setHeader('X-Request-ID', requestId);
   next();
@@ -198,7 +199,7 @@ server.on('upgrade', async (request, socket, head) => {
     const userId = userRes.rows[0].id;
     const userRole = userRes.rows[0].role;
 
-    // 2. Authorize Terminal Shell Access (Requires Super Admin or DevOps Engineer)
+    // 2. Authorize Terminal Shell Access (Requires Super Admin or DevOps Engineer + Project Access)
     if (pathname === '/ws/terminal') {
       if (userRole !== 'Super Admin' && userRole !== 'DevOps Engineer') {
         socket.write(
@@ -206,6 +207,37 @@ server.on('upgrade', async (request, socket, head) => {
         );
         socket.destroy();
         return;
+      }
+
+      if (userRole !== 'Super Admin') {
+        const namespace = urlObj.searchParams.get('namespace') || 'default';
+        let targetProjId = urlObj.searchParams.get('projectId');
+        if (!targetProjId) {
+          const depRes = await query('SELECT project_id FROM deployments WHERE namespace = $1 LIMIT 1', [namespace]);
+          if (depRes.rowCount && depRes.rowCount > 0) targetProjId = depRes.rows[0].project_id;
+        }
+
+        if (targetProjId) {
+          const projRes = await query('SELECT owner_id FROM projects WHERE id = $1', [targetProjId]);
+          if (projRes.rowCount === 0) {
+            socket.write('HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nTarget project not found');
+            socket.destroy();
+            return;
+          }
+          if (projRes.rows[0].owner_id !== userId) {
+            const pmRes = await query('SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2', [
+              targetProjId,
+              userId,
+            ]);
+            if (!pmRes.rowCount || pmRes.rowCount === 0) {
+              socket.write(
+                'HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nForbidden. You are not authorized for this terminal namespace project context.'
+              );
+              socket.destroy();
+              return;
+            }
+          }
+        }
       }
 
       terminalWss.handleUpgrade(request, socket, head, (ws) => {

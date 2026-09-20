@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
+import { sendSafeError } from '../utils/securityUtils';
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
@@ -21,7 +22,7 @@ export async function getSloHealth(_req: Request, res: Response): Promise<void> 
     const sloRes = await query(`SELECT * FROM sre_slo_targets ORDER BY service_name, metric_type`);
     res.status(200).json(sloRes.rows);
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve SRE SLO status.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve SRE SLO status.', 500);
   }
 }
 
@@ -41,7 +42,7 @@ export async function getIncidents(_req: Request, res: Response): Promise<void> 
     const incidentRes = await query(`SELECT * FROM sre_incidents ORDER BY created_at DESC`);
     res.status(200).json(incidentRes.rows);
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve SRE incidents.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve SRE incidents.', 500);
   }
 }
 
@@ -68,13 +69,13 @@ export async function createIncident(req: Request, res: Response): Promise<void>
       source: 'sre',
       severity: severity === 'P1' ? 'CRITICAL' : 'WARNING',
       resource: title,
-      metadata: { incidentId: incident.id, severity }
+      metadata: { incidentId: incident.id, severity },
     });
 
     // If P1 severity, trigger AlertManager and Self-Healing
     if (severity === 'P1') {
       console.log(`[AlertManager] CRITICAL P1 incident registered! Scheduling self-healing actions.`);
-      
+
       const podName = 'deploymate-api-5d7f8c9b-abc12';
       const namespace = 'default';
       const anomaly = 'OOMKilled / CrashLoopBackOff';
@@ -88,17 +89,17 @@ export async function createIncident(req: Request, res: Response): Promise<void>
           anomaly,
           `kubectl delete pod ${podName} --namespace=${namespace} (Controlled Restart)`,
           'SUCCESS',
-          incident.id
+          incident.id,
         ]
       );
     }
 
     res.status(201).json({
       message: 'SRE incident ticket successfully opened.',
-      incident
+      incident,
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to record SRE incident.', error: error.message });
+    sendSafeError(res, error, 'Failed to record SRE incident.', 500);
   }
 }
 
@@ -134,10 +135,13 @@ Provide:
     try {
       const aiRes = await fetch(`${AI_SERVICE_URL}/api/v1/ai/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: prompt, history: [] })
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Internal-Token': process.env.AI_INTERNAL_TOKEN || 'deploymate-internal-ai-secret-token',
+        },
+        body: JSON.stringify({ message: prompt, history: [] }),
       });
-      const data = await aiRes.json() as any;
+      const data = (await aiRes.json()) as any;
       postmortemMarkdown = data.response || data.text;
     } catch (err) {
       console.warn('AI service unreachable, generating default SRE postmortem template.');
@@ -167,15 +171,15 @@ The service encountered exhaustion of resources under simulated load spikes.
       source: 'sre',
       severity: 'INFO',
       resource: incident.title,
-      metadata: { incidentId: id }
+      metadata: { incidentId: id },
     });
 
     res.status(200).json({
       message: 'Incident postmortem compiled and ticket marked as RESOLVED.',
-      incident: updateRes.rows[0]
+      incident: updateRes.rows[0],
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to compile SRE postmortem.', error: error.message });
+    sendSafeError(res, error, 'Failed to compile SRE postmortem.', 500);
   }
 }
 
@@ -184,6 +188,6 @@ export async function getSelfHealingActions(_req: Request, res: Response): Promi
     const listRes = await query(`SELECT * FROM self_healing_actions ORDER BY created_at DESC`);
     res.status(200).json(listRes.rows);
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve self-healing actions.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve self-healing actions.', 500);
   }
 }

@@ -1,22 +1,39 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { query } from '../config/db';
+import { sendSafeError } from '../utils/securityUtils';
 
-export async function listProjects(_req: AuthenticatedRequest, res: Response): Promise<void> {
+export async function listProjects(req: AuthenticatedRequest, res: Response): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: 'Unauthorized.' });
+    return;
+  }
+
   try {
-    // List all projects, joining repository information
-    const projectsRes = await query(
-      `SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
-              r.github_repo_url, r.default_branch, r.webhook_secret
-       FROM projects p
-       LEFT JOIN repositories r ON r.project_id = p.id
-       ORDER BY p.created_at DESC`
-    );
+    let projectsRes;
+    if (req.user.role === 'Super Admin') {
+      projectsRes = await query(
+        `SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+                r.github_repo_url, r.default_branch, (r.webhook_secret IS NOT NULL) AS webhook_configured
+         FROM projects p
+         LEFT JOIN repositories r ON r.project_id = p.id
+         ORDER BY p.created_at DESC`
+      );
+    } else {
+      projectsRes = await query(
+        `SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+                r.github_repo_url, r.default_branch, (r.webhook_secret IS NOT NULL) AS webhook_configured
+         FROM projects p
+         LEFT JOIN repositories r ON r.project_id = p.id
+         WHERE p.owner_id = $1 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id = $1)
+         ORDER BY p.created_at DESC`,
+        [req.user.id]
+      );
+    }
 
     res.status(200).json(projectsRes.rows);
   } catch (error: any) {
-    console.error('List projects error:', error);
-    res.status(500).json({ message: 'Failed to retrieve projects.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve projects.', 500);
   }
 }
 
@@ -62,7 +79,7 @@ export async function createProject(req: AuthenticatedRequest, res: Response): P
       { name: 'Security Scan', status: 'PENDING', logs: '' },
       { name: 'Docker Build', status: 'PENDING', logs: '' },
       { name: 'Image Push', status: 'PENDING', logs: '' },
-      { name: 'Deploy', status: 'PENDING', logs: '' }
+      { name: 'Deploy', status: 'PENDING', logs: '' },
     ];
 
     await query(
@@ -84,13 +101,12 @@ export async function createProject(req: AuthenticatedRequest, res: Response): P
       ...newProject,
       github_repo_url,
       default_branch: default_branch || 'main',
-      webhook_secret: webhookSecret,
-      environment: environment || 'dev'
+      webhook_configured: true,
+      environment: environment || 'dev',
     });
   } catch (error: any) {
     await query('ROLLBACK');
-    console.error('Create project error:', error);
-    res.status(500).json({ message: 'Failed to create project.', error: error.message });
+    sendSafeError(res, error, 'Failed to create project.', 500);
   }
 }
 
@@ -122,8 +138,7 @@ export async function deleteProject(req: AuthenticatedRequest, res: Response): P
 
     res.status(200).json({ message: 'Project deleted successfully.' });
   } catch (error: any) {
-    console.error('Delete project error:', error);
-    res.status(500).json({ message: 'Failed to delete project.', error: error.message });
+    sendSafeError(res, error, 'Failed to delete project.', 500);
   }
 }
 
@@ -140,7 +155,6 @@ export async function getAuditLogs(_req: AuthenticatedRequest, res: Response): P
 
     res.status(200).json(auditRes.rows);
   } catch (error: any) {
-    console.error('Get audit logs error:', error);
-    res.status(500).json({ message: 'Failed to retrieve audit logs.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve audit logs.', 500);
   }
 }

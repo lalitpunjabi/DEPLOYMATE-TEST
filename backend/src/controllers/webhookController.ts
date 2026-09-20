@@ -6,22 +6,41 @@ import { EventBus } from '../services/eventBus';
 
 export async function handleGitHubWebhook(req: Request, res: Response): Promise<void> {
   const signature = req.headers['x-hub-signature-256'] as string;
-  const eventType = req.headers['x-github-event'] as string || 'push';
+  const eventType = (req.headers['x-github-event'] as string) || 'push';
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
-  // Verify HMAC signature if secret is configured and signature present
-  if (secret && signature) {
-    const hmac = crypto.createHmac('sha256', secret);
-    const digest = 'sha256=' + hmac.update(JSON.stringify(req.body)).digest('hex');
-    if (signature !== digest) {
-      res.status(401).json({ message: 'Invalid GitHub HMAC signature' });
+  // Fail closed if webhook secret missing in production
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      res.status(401).json({ message: 'Webhook authentication failed. Server webhook secret is unconfigured.' });
+      return;
+    }
+  } else {
+    if (!signature) {
+      res.status(401).json({ message: 'Missing GitHub HMAC signature header.' });
+      return;
+    }
+
+    try {
+      const hmac = crypto.createHmac('sha256', secret);
+      const digest = 'sha256=' + hmac.update(JSON.stringify(req.body)).digest('hex');
+
+      const sigBuffer = Buffer.from(signature);
+      const digestBuffer = Buffer.from(digest);
+
+      if (sigBuffer.length !== digestBuffer.length || !crypto.timingSafeEqual(sigBuffer, digestBuffer)) {
+        res.status(401).json({ message: 'Invalid GitHub HMAC signature.' });
+        return;
+      }
+    } catch {
+      res.status(401).json({ message: 'Invalid GitHub HMAC signature.' });
       return;
     }
   }
 
   const payload = req.body;
   if (!payload || !payload.repository) {
-    res.status(400).json({ message: 'Invalid webhook payload structure' });
+    res.status(400).json({ message: 'Invalid webhook payload structure.' });
     return;
   }
 

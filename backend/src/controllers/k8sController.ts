@@ -3,13 +3,14 @@ import { AuthenticatedRequest } from '../middleware/auth';
 import { k8sService } from '../services/k8sService';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
+import { sendSafeError } from '../utils/securityUtils';
 
 export async function getNamespaces(_req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const namespaces = await k8sService.getNamespaces();
-    res.status(200).json({ namespaces, mode: k8sService.getMode() });
+    res.status(200).json({ namespaces, execution_mode: k8sService.getMode() });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve namespaces.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve namespaces.', 500);
   }
 }
 
@@ -17,9 +18,9 @@ export async function getPods(req: AuthenticatedRequest, res: Response): Promise
   const { namespace } = req.params;
   try {
     const pods = await k8sService.getPods(namespace || 'default');
-    res.status(200).json(pods);
+    res.status(200).json({ pods, execution_mode: k8sService.getMode() });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve pods.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve pods.', 500);
   }
 }
 
@@ -27,9 +28,9 @@ export async function getDeployments(req: AuthenticatedRequest, res: Response): 
   const { namespace } = req.params;
   try {
     const deployments = await k8sService.getDeployments(namespace || 'default');
-    res.status(200).json(deployments);
+    res.status(200).json({ deployments, execution_mode: k8sService.getMode() });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve deployments.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve deployments.', 500);
   }
 }
 
@@ -37,9 +38,9 @@ export async function getServices(req: AuthenticatedRequest, res: Response): Pro
   const { namespace } = req.params;
   try {
     const services = await k8sService.getServices(namespace || 'default');
-    res.status(200).json(services);
+    res.status(200).json({ services, execution_mode: k8sService.getMode() });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve services.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve services.', 500);
   }
 }
 
@@ -74,7 +75,7 @@ export async function rollbackDeployment(req: AuthenticatedRequest, res: Respons
         name,
         'rolled-back-revision',
         'ROLLBACKED',
-        `# Deployment manually rolled back in cluster namespace ${namespace}`
+        `# Deployment manually rolled back in cluster namespace ${namespace}`,
       ]
     );
 
@@ -82,12 +83,7 @@ export async function rollbackDeployment(req: AuthenticatedRequest, res: Respons
     await query(
       `INSERT INTO audit_logs (user_id, action, resource, details)
        VALUES ($1, $2, $3, $4)`,
-      [
-        req.user.id,
-        'ROLLBACK',
-        'DEPLOYMENT',
-        JSON.stringify({ deploymentName: name, namespace })
-      ]
+      [req.user.id, 'ROLLBACK', 'DEPLOYMENT', JSON.stringify({ deploymentName: name, namespace })]
     );
 
     // Emit EventBus event
@@ -97,13 +93,12 @@ export async function rollbackDeployment(req: AuthenticatedRequest, res: Respons
       severity: 'WARNING',
       resource: name,
       namespace,
-      metadata: { user: req.user.email }
+      metadata: { user: req.user.email },
     });
 
-    res.status(200).json({ message: `Deployment ${name} rolled back successfully.` });
+    res.status(200).json({ message: `Deployment ${name} rolled back successfully.`, execution_mode: k8sService.getMode() });
   } catch (error: any) {
-    console.error('Rollback deployment error:', error);
-    res.status(500).json({ message: 'Failed to execute rollback.', error: error.message });
+    sendSafeError(res, error, 'Failed to execute rollback.', 500);
   }
 }
 
@@ -116,8 +111,10 @@ export async function canarySplit(req: AuthenticatedRequest, res: Response): Pro
   }
 
   try {
-    console.log(`[Canary Split] Setting Canary traffic allocation to ${weight}% on deployment "${name}" in namespace "${namespace}"`);
-    
+    console.log(
+      `[Canary Split] Setting Canary traffic allocation to ${weight}% on deployment "${name}" in namespace "${namespace}"`
+    );
+
     // Save/update canary weight on deployment in DB
     await query(
       `UPDATE deployments SET canary_weight = $1, updated_at = NOW()
@@ -129,12 +126,7 @@ export async function canarySplit(req: AuthenticatedRequest, res: Response): Pro
       await query(
         `INSERT INTO audit_logs (user_id, action, resource, details)
          VALUES ($1, $2, $3, $4)`,
-        [
-          req.user.id,
-          'CANARY_SPLIT',
-          'DEPLOYMENT',
-          JSON.stringify({ name, namespace, weight })
-        ]
+        [req.user.id, 'CANARY_SPLIT', 'DEPLOYMENT', JSON.stringify({ name, namespace, weight })]
       );
     }
 
@@ -144,24 +136,25 @@ export async function canarySplit(req: AuthenticatedRequest, res: Response): Pro
       severity: 'INFO',
       resource: name,
       namespace,
-      metadata: { weight, stable_weight: 100 - weight }
+      metadata: { weight, stable_weight: 100 - weight },
     });
 
     res.status(200).json({
       message: `Canary traffic split of ${weight}% successfully applied to ${name}.`,
+      execution_mode: k8sService.getMode(),
       details: {
         deployment: name,
         namespace,
         traffic_allocation: {
           stable: 100 - weight,
-          canary: weight
+          canary: weight,
         },
         status: 'SYNCED',
-        updated_at: new Date()
-      }
+        updated_at: new Date(),
+      },
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to apply canary traffic split.', error: error.message });
+    sendSafeError(res, error, 'Failed to apply canary traffic split.', 500);
   }
 }
 
@@ -174,7 +167,9 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
   }
 
   try {
-    console.log(`[Blue-Green Swap] Swapping active router of service "${serviceName}" to "${activeColor}" in namespace "${namespace}"`);
+    console.log(
+      `[Blue-Green Swap] Swapping active router of service "${serviceName}" to "${activeColor}" in namespace "${namespace}"`
+    );
 
     await query(
       `INSERT INTO deployments (environment, namespace, deployment_name, image_tag, status, blue_green_color, config_yaml)
@@ -186,7 +181,7 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
         activeColor === 'green' ? 'v2.0.0-green' : 'v1.0.0-blue',
         'DEPLOYED',
         activeColor,
-        `# Blue-Green Router swapped active backend to label color: ${activeColor}`
+        `# Blue-Green Router swapped active backend to label color: ${activeColor}`,
       ]
     );
 
@@ -194,12 +189,7 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
       await query(
         `INSERT INTO audit_logs (user_id, action, resource, details)
          VALUES ($1, $2, $3, $4)`,
-        [
-          req.user.id,
-          'BLUE_GREEN_SWAP',
-          'SERVICE',
-          JSON.stringify({ serviceName, namespace, activeColor })
-        ]
+        [req.user.id, 'BLUE_GREEN_SWAP', 'SERVICE', JSON.stringify({ serviceName, namespace, activeColor })]
       );
     }
 
@@ -209,21 +199,22 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
       severity: 'INFO',
       resource: serviceName,
       namespace,
-      metadata: { activeColor }
+      metadata: { activeColor },
     });
 
     res.status(200).json({
       message: `Blue-Green active backend successfully swapped to ${activeColor.toUpperCase()}.`,
+      execution_mode: k8sService.getMode(),
       details: {
         service: serviceName,
         namespace,
         active_color: activeColor,
         standby_color: activeColor === 'blue' ? 'green' : 'blue',
         router_status: 'HEALTHY',
-        updated_at: new Date()
-      }
+        updated_at: new Date(),
+      },
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to execute Blue-Green router swap.', error: error.message });
+    sendSafeError(res, error, 'Failed to execute Blue-Green router swap.', 500);
   }
 }

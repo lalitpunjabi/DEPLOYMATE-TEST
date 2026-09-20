@@ -169,29 +169,77 @@ export async function requireProjectAccess(
     return;
   }
 
-  let projectId = req.params.projectId || req.params.id || req.body.projectId || req.query.projectId as string;
+  let projectId =
+    req.params.projectId ||
+    req.body.projectId ||
+    (req.query.projectId as string) ||
+    req.params.id;
 
   try {
-    // Resolve child resource parameters to parent projectId if necessary
+    // Resolve child resource parameters to parent projectId
     if (!projectId && req.params.pipelineId) {
       const pRes = await query('SELECT project_id FROM pipelines WHERE id = $1', [req.params.pipelineId]);
       if (pRes.rowCount && pRes.rowCount > 0) projectId = pRes.rows[0].project_id;
+      else { res.status(404).json({ message: 'Pipeline not found.' }); return; }
     }
-    if (!projectId && (req.params.runId || req.params.pipelineRunId)) {
-      const runId = req.params.runId || req.params.pipelineRunId;
+
+    if (!projectId && (req.params.runId || req.params.pipelineRunId || req.query.runId)) {
+      const runId = req.params.runId || req.params.pipelineRunId || (req.query.runId as string);
       const prRes = await query(
         'SELECT p.project_id FROM pipeline_runs pr JOIN pipelines p ON pr.pipeline_id = p.id WHERE pr.id = $1',
         [runId]
       );
       if (prRes.rowCount && prRes.rowCount > 0) projectId = prRes.rows[0].project_id;
+      else { res.status(404).json({ message: 'Pipeline run not found.' }); return; }
     }
+
     if (!projectId && req.params.deploymentId) {
       const dRes = await query('SELECT project_id FROM deployments WHERE id = $1', [req.params.deploymentId]);
       if (dRes.rowCount && dRes.rowCount > 0) projectId = dRes.rows[0].project_id;
+      else { res.status(404).json({ message: 'Deployment not found.' }); return; }
     }
-    if (!projectId && req.params.stateId) {
-      const sRes = await query('SELECT project_id FROM terraform_states WHERE id = $1', [req.params.stateId]);
+
+    if (!projectId && (req.params.stateId || req.body.id || req.body.stateId)) {
+      const stateId = req.params.stateId || req.body.id || req.body.stateId;
+      const sRes = await query('SELECT project_id FROM terraform_states WHERE id = $1', [stateId]);
       if (sRes.rowCount && sRes.rowCount > 0) projectId = sRes.rows[0].project_id;
+      else { res.status(404).json({ message: 'Terraform state not found.' }); return; }
+    }
+
+    if (!projectId && (req.params.incidentId || req.body.incidentId)) {
+      const incidentId = req.params.incidentId || req.body.incidentId;
+      const iRes = await query('SELECT project_id FROM sre_incidents WHERE id = $1', [incidentId]);
+      if (iRes.rowCount && iRes.rowCount > 0 && iRes.rows[0].project_id) projectId = iRes.rows[0].project_id;
+    }
+
+    if (!projectId && (req.params.chaosId || req.body.chaosId)) {
+      const chaosId = req.params.chaosId || req.body.chaosId;
+      const cRes = await query('SELECT project_id FROM chaos_experiments WHERE id = $1', [chaosId]);
+      if (cRes.rowCount && cRes.rowCount > 0 && cRes.rows[0].project_id) projectId = cRes.rows[0].project_id;
+    }
+
+    if (!projectId && (req.params.gitopsId || req.body.gitopsId || req.params.appName)) {
+      const gitopsId = req.params.gitopsId || req.body.gitopsId || req.params.appName;
+      const gRes = await query(
+        'SELECT project_id FROM gitops_sync_history WHERE id = $1 OR app_name = $1 LIMIT 1',
+        [gitopsId]
+      );
+      if (gRes.rowCount && gRes.rowCount > 0) projectId = gRes.rows[0].project_id;
+    }
+
+    if (!projectId && req.params.scanId) {
+      const scanRes = await query(
+        'SELECT p.project_id FROM pipeline_security_scans pss JOIN pipeline_runs pr ON pss.pipeline_run_id = pr.id JOIN pipelines p ON pr.pipeline_id = p.id WHERE pss.id = $1',
+        [req.params.scanId]
+      );
+      if (scanRes.rowCount && scanRes.rowCount > 0) projectId = scanRes.rows[0].project_id;
+      else { res.status(404).json({ message: 'Security scan not found.' }); return; }
+    }
+
+    if (!projectId && (req.params.namespace || req.query.namespace)) {
+      const ns = req.params.namespace || (req.query.namespace as string);
+      const nsRes = await query('SELECT project_id FROM deployments WHERE namespace = $1 LIMIT 1', [ns]);
+      if (nsRes.rowCount && nsRes.rowCount > 0) projectId = nsRes.rows[0].project_id;
     }
 
     if (!projectId) {

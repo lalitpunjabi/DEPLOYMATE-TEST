@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "db:init": "node dist/config/initDb.js"
+    "db:init": "node dist/config/initDb.js",
+    "db:migrate": "node dist/config/initDb.js"
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",

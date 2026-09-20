@@ -32,7 +32,7 @@ jobs:
       - name: Run Dependency Audit
         run: |
           cd backend
-          npm audit --audit-level=critical || true
+          npm audit --audit-level=high
 
       - name: Run TypeScript Build Check
         run: |

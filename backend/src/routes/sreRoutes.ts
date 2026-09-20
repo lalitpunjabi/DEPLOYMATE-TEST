@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getSloHealth, getIncidents, createIncident, generatePostmortem, getSelfHealingActions } from '../controllers/sreController';
-import { authenticateToken, checkPermission } from '../middleware/auth';
+import { authenticateToken, checkPermission, requireProjectAccess } from '../middleware/auth';
 
 const router = Router();
 
@@ -8,9 +8,10 @@ const router = Router();
 router.use(authenticateToken);
 
 router.get('/slo-health', checkPermission('incident.read'), getSloHealth);
-router.get('/incidents', checkPermission('incident.read'), getIncidents);
-router.post('/incidents', checkPermission('incident.create'), createIncident);
-router.post('/incidents/:id/postmortem', checkPermission('incident.resolve'), generatePostmortem);
-router.get('/self-healing-actions', checkPermission('incident.read'), getSelfHealingActions);
+router.get('/incidents', checkPermission('incident.read'), requireProjectAccess, getIncidents);
+router.post('/incidents', checkPermission('incident.create'), requireProjectAccess, createIncident);
+router.post('/incidents/:id/postmortem', checkPermission('incident.resolve'), requireProjectAccess, generatePostmortem);
+router.get('/self-healing-actions', checkPermission('incident.read'), requireProjectAccess, getSelfHealingActions);
 
 export default router;
+

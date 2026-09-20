@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getNamespaces, getPods, getDeployments, getServices, rollbackDeployment, canarySplit, blueGreenSwap } from '../controllers/k8sController';
-import { authenticateToken, authorize } from '../middleware/auth';
+import { authenticateToken, authorize, requireProjectAccess } from '../middleware/auth';
 
 const router = Router();
 
@@ -8,12 +8,13 @@ const router = Router();
 router.use(authenticateToken);
 
 router.get('/namespaces', authorize('deployments', 'read'), getNamespaces);
-router.get('/:namespace/pods', authorize('deployments', 'read'), getPods);
-router.get('/:namespace/deployments', authorize('deployments', 'read'), getDeployments);
-router.get('/:namespace/services', authorize('deployments', 'read'), getServices);
-router.post('/rollback', authorize('deployments', 'rollback'), rollbackDeployment);
-router.post('/canary-split', authorize('deployments', 'rollback'), canarySplit);
-router.post('/blue-green-swap', authorize('deployments', 'rollback'), blueGreenSwap);
+router.get('/:namespace/pods', authorize('deployments', 'read'), requireProjectAccess, getPods);
+router.get('/:namespace/deployments', authorize('deployments', 'read'), requireProjectAccess, getDeployments);
+router.get('/:namespace/services', authorize('deployments', 'read'), requireProjectAccess, getServices);
+router.post('/rollback', authorize('deployments', 'rollback'), requireProjectAccess, rollbackDeployment);
+router.post('/canary-split', authorize('deployments', 'rollback'), requireProjectAccess, canarySplit);
+router.post('/blue-green-swap', authorize('deployments', 'rollback'), requireProjectAccess, blueGreenSwap);
 
 export default router;
+
 
