@@ -3,8 +3,21 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { query } from '../config/db';
-import { getJwtSecret } from '../middleware/auth';
+import { AuthenticatedRequest, getJwtSecret } from '../middleware/auth';
 import { hashToken, sendSafeError } from '../utils/securityUtils';
+
+export const wsTickets = new Map<string, { userId: string; expiresAt: number }>();
+
+export async function createWsTicket(req: AuthenticatedRequest, res: Response): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: 'Unauthorized.' });
+    return;
+  }
+  const ticket = crypto.randomBytes(24).toString('hex');
+  const expiresAt = Date.now() + 60 * 1000; // 60-second single-use ticket
+  wsTickets.set(ticket, { userId: req.user.id, expiresAt });
+  res.status(200).json({ ticket, expires_in: 60 });
+}
 
 export async function register(req: Request, res: Response): Promise<void> {
   const { name, email, password } = req.body;

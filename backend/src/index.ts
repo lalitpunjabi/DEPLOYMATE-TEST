@@ -147,34 +147,70 @@ terminalWss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
   });
 });
 
+import { wsTickets } from './controllers/authController';
+
 // Authenticated Upgrade HTTP connection to WebSocket with role & resource validation
 server.on('upgrade', async (request, socket, head) => {
   const urlObj = new URL(request.url || '', `http://${request.headers.host}`);
   const pathname = urlObj.pathname;
   const token = urlObj.searchParams.get('token');
+  const ticket = urlObj.searchParams.get('ticket');
 
   if (pathname !== '/ws/logs' && pathname !== '/ws/terminal') {
     socket.destroy();
     return;
   }
 
-  // 1. Authenticate Token
-  if (!token) {
-    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nMissing token parameter');
+  // 1. Authenticate Ticket or Token
+  let userId: string | null = null;
+
+  if (ticket) {
+    const ticketData = wsTickets.get(ticket);
+    if (ticketData && ticketData.expiresAt > Date.now()) {
+      userId = ticketData.userId;
+      wsTickets.delete(ticket); // Single-use consumption
+    } else {
+      wsTickets.delete(ticket);
+      socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid or expired ticket');
+      socket.destroy();
+      return;
+    }
+  } else if (token) {
+    try {
+      const decoded = jwt.verify(token, getJwtSecret()) as { userId: string };
+      const tokenHashStr = hashToken(token);
+
+      const sessionCheck = await query(
+        `SELECT revoked_at, expires_at FROM user_sessions WHERE token_hash = $1`,
+        [tokenHashStr]
+      );
+
+      if (sessionCheck.rowCount && sessionCheck.rowCount > 0) {
+        if (sessionCheck.rows[0].revoked_at !== null || new Date(sessionCheck.rows[0].expires_at) < new Date()) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nSession revoked or expired');
+          socket.destroy();
+          return;
+        }
+      }
+      userId = decoded.userId;
+    } catch {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid authentication token');
+      socket.destroy();
+      return;
+    }
+  } else {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nAuthentication ticket or token required');
     socket.destroy();
     return;
   }
 
   try {
-    const decoded = jwt.verify(token, getJwtSecret()) as { userId: string };
-    const tokenHashStr = hashToken(token);
-
     const userRes = await query(
       `SELECT u.id, u.is_active, r.name as role 
        FROM users u
        JOIN roles r ON u.role_id = r.id
        WHERE u.id = $1`,
-      [decoded.userId]
+      [userId]
     );
 
     if (userRes.rowCount === 0 || userRes.rows[0].is_active === false) {
@@ -183,20 +219,6 @@ server.on('upgrade', async (request, socket, head) => {
       return;
     }
 
-    const sessionCheck = await query(
-      `SELECT revoked_at, expires_at FROM user_sessions WHERE token_hash = $1`,
-      [tokenHashStr]
-    );
-
-    if (sessionCheck.rowCount && sessionCheck.rowCount > 0) {
-      if (sessionCheck.rows[0].revoked_at !== null || new Date(sessionCheck.rows[0].expires_at) < new Date()) {
-        socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nSession revoked or expired');
-        socket.destroy();
-        return;
-      }
-    }
-
-    const userId = userRes.rows[0].id;
     const userRole = userRes.rows[0].role;
 
     // 2. Authorize Terminal Shell Access (Requires Super Admin or DevOps Engineer + Project Access)
@@ -210,32 +232,39 @@ server.on('upgrade', async (request, socket, head) => {
       }
 
       if (userRole !== 'Super Admin') {
-        const namespace = urlObj.searchParams.get('namespace') || 'default';
-        let targetProjId = urlObj.searchParams.get('projectId');
-        if (!targetProjId) {
-          const depRes = await query('SELECT project_id FROM deployments WHERE namespace = $1 LIMIT 1', [namespace]);
-          if (depRes.rowCount && depRes.rowCount > 0) targetProjId = depRes.rows[0].project_id;
+        const namespace = urlObj.searchParams.get('namespace');
+        if (!namespace) {
+          socket.write('HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nNamespace parameter is required');
+          socket.destroy();
+          return;
         }
 
-        if (targetProjId) {
-          const projRes = await query('SELECT owner_id FROM projects WHERE id = $1', [targetProjId]);
-          if (projRes.rowCount === 0) {
-            socket.write('HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nTarget project not found');
+        const depRes = await query('SELECT DISTINCT project_id FROM deployments WHERE namespace = $1', [namespace]);
+        if (depRes.rowCount !== 1) {
+          socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nUnmapped or ambiguous namespace project context');
+          socket.destroy();
+          return;
+        }
+
+        const targetProjId = depRes.rows[0].project_id;
+        const projRes = await query('SELECT owner_id FROM projects WHERE id = $1', [targetProjId]);
+        if (projRes.rowCount === 0) {
+          socket.write('HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nTarget project not found');
+          socket.destroy();
+          return;
+        }
+
+        if (projRes.rows[0].owner_id !== userId) {
+          const pmRes = await query('SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2', [
+            targetProjId,
+            userId,
+          ]);
+          if (!pmRes.rowCount || pmRes.rowCount === 0) {
+            socket.write(
+              'HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nForbidden. You are not authorized for this terminal namespace project context.'
+            );
             socket.destroy();
             return;
-          }
-          if (projRes.rows[0].owner_id !== userId) {
-            const pmRes = await query('SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2', [
-              targetProjId,
-              userId,
-            ]);
-            if (!pmRes.rowCount || pmRes.rowCount === 0) {
-              socket.write(
-                'HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nForbidden. You are not authorized for this terminal namespace project context.'
-              );
-              socket.destroy();
-              return;
-            }
           }
         }
       }
@@ -249,7 +278,13 @@ server.on('upgrade', async (request, socket, head) => {
     // 3. Authorize Log Streaming & Verify Resource Project Access
     if (pathname === '/ws/logs') {
       const runId = urlObj.searchParams.get('runId');
-      if (runId && userRole !== 'Super Admin') {
+      if (userRole !== 'Super Admin') {
+        if (!runId) {
+          socket.write('HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nMissing runId parameter');
+          socket.destroy();
+          return;
+        }
+
         const runRes = await query(
           `SELECT p.project_id, p.owner_id 
            FROM pipeline_runs pr 
