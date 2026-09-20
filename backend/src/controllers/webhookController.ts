@@ -13,17 +13,23 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
   const deliveryId = req.headers['x-github-delivery'] as string;
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
-  // Webhook Replay Protection using delivery ID
+  // Webhook Replay Protection using persistent DB tracking & in-memory fallback
   if (deliveryId) {
-    if (processedDeliveryIds.has(deliveryId)) {
-      res.status(200).json({ status: 'IGNORED', message: 'Duplicate webhook delivery ID detected.' });
-      return;
-    }
-    processedDeliveryIds.add(deliveryId);
-    // Limit memory footprint of delivery ID cache
-    if (processedDeliveryIds.size > 10000) {
-      const firstItem = processedDeliveryIds.values().next().value;
-      if (firstItem) processedDeliveryIds.delete(firstItem);
+    try {
+      const delCheck = await query(
+        `INSERT INTO webhook_deliveries (delivery_id) VALUES ($1) ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id`,
+        [deliveryId]
+      );
+      if (delCheck.rowCount === 0) {
+        res.status(200).json({ status: 'IGNORED', message: 'Duplicate webhook delivery ID detected.' });
+        return;
+      }
+    } catch {
+      if (processedDeliveryIds.has(deliveryId)) {
+        res.status(200).json({ status: 'IGNORED', message: 'Duplicate webhook delivery ID detected.' });
+        return;
+      }
+      processedDeliveryIds.add(deliveryId);
     }
   }
 

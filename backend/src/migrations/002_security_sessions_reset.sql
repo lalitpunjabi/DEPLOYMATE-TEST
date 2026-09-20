@@ -41,6 +41,12 @@ ALTER TABLE remediation_approvals ADD COLUMN IF NOT EXISTS artifact_hash VARCHAR
 ALTER TABLE sre_incidents ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE CASCADE;
 ALTER TABLE chaos_experiments ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE CASCADE;
 
+-- Create webhook_deliveries table for persistent delivery ID tracking & replay protection
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  delivery_id VARCHAR(255) PRIMARY KEY,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create indexes for fast lookup
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
@@ -48,5 +54,6 @@ CREATE INDEX IF NOT EXISTS idx_reset_tokens_hash ON password_reset_tokens(token_
 CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_sre_incidents_project ON sre_incidents(project_id);
 CREATE INDEX IF NOT EXISTS idx_chaos_experiments_project ON chaos_experiments(project_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_id ON webhook_deliveries(delivery_id);
 
 
