@@ -221,10 +221,10 @@ export async function requireProjectAccess(
     if (!projectId && (req.params.gitopsId || req.body.gitopsId || req.params.appName)) {
       const gitopsId = req.params.gitopsId || req.body.gitopsId || req.params.appName;
       const gRes = await query(
-        'SELECT project_id FROM gitops_sync_history WHERE id = $1 OR app_name = $1 LIMIT 1',
+        'SELECT DISTINCT project_id FROM gitops_sync_history WHERE id = $1 OR app_name = $1',
         [gitopsId]
       );
-      if (gRes.rowCount && gRes.rowCount > 0) projectId = gRes.rows[0].project_id;
+      if (gRes.rowCount === 1) projectId = gRes.rows[0].project_id;
     }
 
     if (!projectId && req.params.scanId) {
@@ -238,12 +238,12 @@ export async function requireProjectAccess(
 
     if (!projectId && (req.params.namespace || req.query.namespace)) {
       const ns = req.params.namespace || (req.query.namespace as string);
-      const nsRes = await query('SELECT project_id FROM deployments WHERE namespace = $1 LIMIT 1', [ns]);
-      if (nsRes.rowCount && nsRes.rowCount > 0) projectId = nsRes.rows[0].project_id;
+      const nsRes = await query('SELECT DISTINCT project_id FROM deployments WHERE namespace = $1', [ns]);
+      if (nsRes.rowCount === 1) projectId = nsRes.rows[0].project_id;
     }
 
     if (!projectId) {
-      next();
+      res.status(403).json({ message: 'Forbidden. Project context is required for this operation.' });
       return;
     }
 

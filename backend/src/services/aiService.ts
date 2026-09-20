@@ -4,13 +4,23 @@ import path from 'path';
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-const AI_INTERNAL_TOKEN = process.env.AI_INTERNAL_TOKEN || 'deploymate-internal-ai-secret-token';
+
+function getAiInternalToken(): string {
+  const token = process.env.AI_INTERNAL_TOKEN;
+  if (!token) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL SECURITY ERROR: AI_INTERNAL_TOKEN environment variable is missing in production mode.');
+    }
+    return 'deploymate-internal-ai-secret-token-dev-only';
+  }
+  return token;
+}
 
 class AiService {
   private getHeaders() {
     return {
       'Content-Type': 'application/json',
-      'X-Internal-Token': AI_INTERNAL_TOKEN,
+      'X-Internal-Token': getAiInternalToken(),
     };
   }
 

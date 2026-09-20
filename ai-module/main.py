@@ -19,8 +19,13 @@ load_dotenv()
 
 app = FastAPI(title="Deploymate AI Engine", version="1.0.0")
 
+AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN")
+if not AI_INTERNAL_TOKEN and os.getenv("ENVIRONMENT") == "production":
+    raise RuntimeError("FATAL SECURITY ERROR: AI_INTERNAL_TOKEN environment variable is missing in production mode.")
+if not AI_INTERNAL_TOKEN:
+    AI_INTERNAL_TOKEN = "deploymate-internal-ai-secret-token-dev-only"
+
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://backend:5000,http://localhost:5000,http://localhost:5173").split(",")
-AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "deploymate-internal-ai-secret-token")
 
 # Enable CORS restricted to internal services
 app.add_middleware(

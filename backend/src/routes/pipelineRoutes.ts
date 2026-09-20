@@ -7,10 +7,10 @@ const router = Router();
 // Secure all routes with JWT token authentication
 router.use(authenticateToken);
 
-router.get('/', authorize('pipelines', 'read'), listPipelines);
-router.post('/', authorize('pipelines', 'create'), createPipeline);
+router.get('/', authorize('pipelines', 'read'), requireProjectAccess, listPipelines);
+router.post('/', authorize('pipelines', 'create'), requireProjectAccess, createPipeline);
 router.post('/:pipelineId/run', authorize('pipelines', 'run'), requireProjectAccess, runPipeline);
-router.get('/runs', authorize('pipelines', 'read'), listPipelineRuns);
+router.get('/runs', authorize('pipelines', 'read'), requireProjectAccess, listPipelineRuns);
 router.get('/runs/:runId', authorize('pipelines', 'read'), requireProjectAccess, getPipelineRun);
 
 export default router;
