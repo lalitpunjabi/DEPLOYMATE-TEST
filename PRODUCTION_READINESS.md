@@ -54,6 +54,7 @@ Optional **integration** gates that require external systems (a live Kubernetes 
 - **LIVE VERIFIED:** login returns a token; after `/auth/logout`, the same token yields `401` ("Session has been revoked or logged out."). (Live test 3 & 4.)
 - Self-registration always assigns the least-privilege `Developer` role — privilege escalation through the public API is impossible (**LIVE VERIFIED**, live test 5).
 - RBAC permission category keys were corrected to match the runtime checks (see §5) so documented roles are actually enforced.
+- **Administrative disable takes effect immediately:** `PATCH /admin/users/:id/status {isActive:false}` revokes the user's active sessions, and both `authenticateToken` and `/auth/login` reject a disabled account. (**LIVE VERIFIED**, live test 14: existing session → `401/403`, re-login → `403`.)
 
 ---
 
@@ -113,6 +114,7 @@ Audit isolation (`auditService.queryAuditLogs`) implements three visibility clas
 - Multi-stage builds; `npm ci --omit=dev`; non-root runtime users.
 - Compose prod: `security_opt: no-new-privileges`, `cap_drop: ALL` (with the minimal `cap_add` required by Postgres/Nginx bind), read-only cert mount, JSON log rotation, and `HEALTHCHECK` on backend/frontend/AI.
 - `.dockerignore` added for backend/frontend/ai-module to keep secrets and `node_modules` out of build contexts.
+- **Repo hygiene (verified this pass):** `git ls-files` confirms `dist/`, `node_modules/`, `.env*` and `certs/*.pem` are **not** tracked. A previously-committed `ai-module/__pycache__/main.cpython-313.pyc` was untracked (`git rm --cached`); `.gitignore` already excludes it, so it will not return.
 - **LIVE VERIFIED:** all three prod images build; containers report healthy.
 
 ---
@@ -133,6 +135,7 @@ Audit isolation (`auditService.queryAuditLogs`) implements three visibility clas
 - The backend `aiService` gateway calls the module with a 30s timeout and **never serves unlabeled mock output**: unreachable / non-2xx / parse errors throw `AiUnavailableError` → HTTP `503` with `execution_mode: "DEGRADED"`. All five former silent-mock fallbacks were removed.
 - `execution_mode` propagates the module's honest engine label: `LIVE` **only** when the module reports `engine: "LIVE"` (Gemini genuinely ran), else `SIMULATED`.
 - **SIMULATED (live-verified as labelled):** with `AI_MODE=simulated` the module returns `engine:"SIMULATED"`.
+- **No IDOR surface on AI analysis endpoints:** `failure-analysis`, `log-analysis`, `risk-assessment`, `pipeline-generator` and `chat` are stateless — they analyze client-supplied text only and never resolve a resource by id, so there is no cross-tenant lookup to bypass. `create-fix-pr` derives its project from the DB (`runId`/repo) and enforces owner/`project_members` membership before acting (**STATIC VERIFIED** by code audit).
 - **NOT VERIFIED:** the Gemini `LIVE` branch (no API key in this environment) and the AI-container token-rejection path (AI container `/health` reachable internally; the enforced rejection was verified statically/prior).
 
 ---
@@ -142,6 +145,7 @@ Audit isolation (`auditService.queryAuditLogs`) implements three visibility clas
 - `getLiveMetrics` reports `source: "PROMETHEUS_LIVE"`, `execution_mode: "LIVE"` **only inside the successful-query block**. On failure with `PROMETHEUS_URL` set → `DEGRADED` (simulated placeholders + explicit notice); unset → `SIMULATED`.
 - Centralized logs and SRE dashboards label simulated data honestly.
 - **NOT VERIFIED:** live Prometheus querying (no instance configured here). Frontend badges display `execution_mode` honestly in Monitoring/Deployments/SRE.
+- **Tenant posture (fail-closed by design):** `/api/v1/monitoring/*` and FinOps are gated by `authorize('metrics','read')`, and no seeded role grants `metrics` — so cluster-wide telemetry/FinOps is effectively **Super-Admin-only**. They accept a `namespace`/query but perform no per-project lookup; exposing them to non-admins would first require wiring `namespace → project` through `requireProjectAccess` (see §23). Left intentionally restrictive rather than widened without scoping.
 
 ---
 
@@ -173,6 +177,8 @@ SLO/SLI figures are labelled `SIMULATED` (stored reference targets, not live mea
 
 `.github/workflows/deploymate-ci.yml` runs, with **no `|| true` masking anywhere**: backend build + compiled security regression tests + `npm audit`; a **Postgres-backed live-integration job** (`db:init/migrate/seed` → start server → `/health` gate → `LIVE_INTEGRATION=1` suite); frontend build; AI compile-check; `docker compose config -q` + full image build; and `helm lint` + `helm template` (with required values asserted). **STATIC VERIFIED** (workflow authored; individual commands reproduced locally as documented below).
 
+Two CI-only defects that local/Docker runs masked were fixed: (1) the integration job sets `NODE_ENV=production`, which makes `npm ci` skip `devDependencies` (`@types/*`) and breaks `tsc` — corrected to `npm ci --include=dev`; (2) `tsc` does not copy non-TS `.sql` assets, so a raw `node dist/... db:migrate` found no migrations and **silently exited 0** (masked in Docker by an explicit `COPY src/migrations`). `migrationRunner.ts` now resolves the migrations dir from candidate paths and **throws** if none contain `.sql`, so downstream seeding can never run against an un-migrated schema.
+
 ## 20. Automated Test Results
 
 Security regression suite — **STATIC VERIFIED, 31/31 PASSED** (`node dist/__tests__/security.test.js`), covering tenant isolation (1–11), WebSocket tickets (12–15), webhooks (16–22), DB lifecycle/secrets (23–26), 12-char password policy (27–29), UUID + WS-ticket format (30–31).
@@ -184,7 +190,7 @@ Backend `tsc` build and frontend `vite build` — **STATIC VERIFIED**, exit 0.
 Against a genuinely running `docker-compose.prod.yml` stack — **LIVE VERIFIED**:
 - `docker compose config -q` → exit 0; three images built; `ps` shows backend/db/ai **healthy**, frontend up; **only 80/443 published** (5000/8000/5432 internal).
 - `db:init` → `db:migrate` (applied `003_hardening.sql`) → `db:seed` all exit 0.
-- **Live integration suite — 14/14 PASSED**: health/ready, login, session revocation, Developer-cannot-create (least privilege), cross-tenant deny + owner allow, listing excludes other tenant, WS ticket issue, real WS `101` upgrade, replay→401, JWT-query→401, malformed→401, password policy 400/201, webhook HMAC + replay.
+- **Live integration suite — 15/15 PASSED**: health/ready, login, session revocation, Developer-cannot-create (least privilege), cross-tenant deny + owner allow, listing excludes other tenant, WS ticket issue, real WS `101` upgrade, replay→401, JWT-query→401, malformed→401, password policy 400/201, webhook HMAC + replay, and admin-disabled user loses access immediately + cannot re-login (live test 14).
 - HTTPS 301 redirect + header set; `/metrics` not publicly exposed.
 
 ## 22. Simulated Features (by design)
@@ -197,6 +203,8 @@ GitOps reconcile/sync/drift, Terraform plan/apply, Chaos injection, Kubernetes r
 2. **Multi-replica WS handoff not load-tested** — the Postgres ticket store is correct by construction, but no 2-replica concurrency test was run.
 3. **External LIVE integrations (K8s, Prometheus, Gemini, Trivy/Sonar/GitHub) NOT VERIFIED** end-to-end; they must be validated against the real systems in the target environment before relying on their `LIVE` paths.
 4. The AI-container internal-token rejection and Gemini `LIVE` branch were verified statically/by labelling, not against a live AI+Gemini deployment in this run.
+5. **Frontend code-quality lint is advisory, not a CI gate.** `npm run lint` reports 58 pre-existing stylistic findings (mostly `@typescript-eslint/no-explicit-any` and the strict React-19 `react-hooks` purity/set-state rules) unrelated to security. The frontend `tsc -b` typecheck and production `vite build` are green and are what CI enforces. Clearing the hook/`any` findings is an out-of-scope refactor deferred to avoid regressions; no lint gate was disabled or `|| true`-masked to hide them.
+6. **Cluster-wide Monitoring/FinOps are intentionally Super-Admin-gated (fail-closed).** Making them safe for lower-privilege roles requires `namespace → project` scoping via `requireProjectAccess` before widening the `metrics` permission (§13).
 
 ## 24. Production Deployment Checklist
 

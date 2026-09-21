@@ -266,6 +266,25 @@ async function runLiveTests() {
     console.log('⚠️ Live 13 skipped: LIVE_WEBHOOK_SECRET / GITHUB_WEBHOOK_SECRET not available to the test client.');
   }
 
+  // Live 14: Admin-disabled user loses access immediately (session revocation) and cannot re-login
+  const beforeDisable = await request('GET', '/api/v1/projects', { headers: authUserA });
+  assert.strictEqual(beforeDisable.status, 200, `Active user should list projects before disable (got ${beforeDisable.status})`);
+
+  const disableRes = await request('PATCH', `/api/v1/admin/users/${userAId}/status`, {
+    headers: authAdmin,
+    body: { isActive: false },
+  });
+  assert.strictEqual(disableRes.status, 200, `Admin should be able to disable a user (got ${disableRes.status}: ${disableRes.body})`);
+
+  // Existing session must be revoked immediately upon disable.
+  const afterDisable = await request('GET', '/api/v1/projects', { headers: authUserA });
+  assert.ok(afterDisable.status === 401 || afterDisable.status === 403, `Disabled user's active session must be rejected (got ${afterDisable.status})`);
+
+  // Disabled user must not be able to authenticate again.
+  const reloginDisabled = await request('POST', '/api/v1/auth/login', { body: { email: userAEmail, password: userPass } });
+  assert.strictEqual(reloginDisabled.status, 403, `Login for a disabled user must be rejected (got ${reloginDisabled.status})`);
+  console.log('✅ Live 14: Disabled user loses access immediately and cannot re-authenticate');
+
   console.log('[Live Integration] Completed the checks that this environment can execute over HTTP + WebSocket.');
 }
 
