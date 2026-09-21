@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: deploymate-backend
+    {{- include "deploymate.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: deploymate-backend
+  ports:
+    - name: http
+      port: {{ .Values.service.backend.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/name: deploymate-frontend
+    {{- include "deploymate.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: deploymate-frontend
+  ports:
+    - name: http
+      port: {{ .Values.service.frontend.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-module
+  labels:
+    app.kubernetes.io/name: deploymate-ai
+    {{- include "deploymate.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: deploymate-ai
+  ports:
+    - name: http
+      port: {{ .Values.service.ai.port }}
+      targetPort: http

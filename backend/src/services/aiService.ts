@@ -6,12 +6,11 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
 function getAiInternalToken(): string {
-  const token = process.env.AI_INTERNAL_TOKEN;
+  const token = process.env.AI_INTERNAL_TOKEN?.trim();
   if (!token) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL SECURITY ERROR: AI_INTERNAL_TOKEN environment variable is missing in production mode.');
-    }
-    return 'deploymate-internal-ai-secret-token-dev-only';
+    throw new Error(
+      'FATAL SECURITY ERROR: AI_INTERNAL_TOKEN is required. Set a unique token in the environment; no built-in default exists.'
+    );
   }
   return token;
 }

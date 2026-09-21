@@ -42,8 +42,6 @@ services:
       NODE_ENV: production
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD}
       DB_APP_USER: ${DB_APP_USER:-deploymate_app}
       DB_APP_PASSWORD: ${DB_APP_PASSWORD}
       DB_NAME: ${DB_NAME:-deploymate}
@@ -87,6 +85,7 @@ services:
       NODE_ENV: production
       AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_MODE: ${AI_MODE:-simulated}
       ALLOWED_ORIGINS: http://backend:5000
     # Port 8000 is isolated inside private internal container network
     networks:

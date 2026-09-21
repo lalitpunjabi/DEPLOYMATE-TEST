@@ -1,199 +1,89 @@
 import { Client } from 'pg';
-import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import path from 'path';
-import { runMigrations } from '../services/migrationRunner';
+import { assertIdentifier, resolveAdminDbConfig } from './dbRuntimeConfig';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
-if (process.env.NODE_ENV === 'production') {
-  if (!process.env.DB_PASSWORD || process.env.DB_PASSWORD === 'postgres') {
-    throw new Error('FATAL SECURITY ERROR: DB_PASSWORD environment variable is required in production mode.');
-  }
+async function execFormatted(client: Client, fmt: string, ...args: string[]): Promise<void> {
+  const formatted = await client.query('SELECT format($1, VARIADIC $2::text[]) AS ddl', [fmt, args]);
+  await client.query(formatted.rows[0].ddl);
 }
 
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres_dev_only',
-};
-
 async function init() {
-  console.log('Starting DEPLOYMATE Database Migration & Initialization...');
+  console.log('[db:init] Provisioning database and restricted application role only (no migrations, no seed).');
 
-  // 1. Connect to default 'postgres' database to check/create 'deploymate'
+  const admin = resolveAdminDbConfig();
+  const dbName = assertIdentifier(process.env.DB_NAME || 'deploymate', 'database name');
+  const appUser = assertIdentifier(process.env.DB_APP_USER || '', 'application user');
+  const appPassword = process.env.DB_APP_PASSWORD;
+
+  if (!appPassword || !appPassword.trim()) {
+    throw new Error('FATAL: DB_APP_USER and DB_APP_PASSWORD are required so db:init can provision the runtime role.');
+  }
+
   const adminClient = new Client({
-    ...dbConfig,
+    host: admin.host,
+    port: admin.port,
+    user: admin.user,
+    password: admin.password,
     database: 'postgres',
   });
 
   try {
     await adminClient.connect();
-    console.log('Connected to default postgres database.');
+    console.log('[db:init] Connected to administrative database "postgres".');
 
-    const dbName = process.env.DB_NAME || 'deploymate';
-    if (!/^[a-zA-Z0-9_]+$/.test(dbName)) {
-      throw new Error(`SECURITY ERROR: Invalid database name identifier "${dbName}". Must contain alphanumeric characters and underscores only.`);
-    }
-
-    const dbCheckRes = await adminClient.query(
-      "SELECT 1 FROM pg_database WHERE datname = $1",
-      [dbName]
-    );
-
+    const dbCheckRes = await adminClient.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
     if (dbCheckRes.rowCount === 0) {
-      console.log(`Database "${dbName}" does not exist. Creating...`);
-      // dbName is validated against strict alphanumeric regex above
-      await adminClient.query(`CREATE DATABASE ${dbName}`);
-      console.log(`Database "${dbName}" created successfully.`);
+      console.log(`[db:init] Creating database "${dbName}"...`);
+      await execFormatted(adminClient, 'CREATE DATABASE %I', dbName);
     } else {
-      console.log(`Database "${dbName}" already exists.`);
+      console.log(`[db:init] Database "${dbName}" already exists.`);
     }
 
-    // Provision dedicated non-superuser application role
-    const appUser = process.env.DB_APP_USER || 'deploymate_app';
-    const appPassword = process.env.DB_APP_PASSWORD || 'deploymate_app_password';
-    if (!/^[a-zA-Z0-9_]+$/.test(appUser)) {
-      throw new Error(`SECURITY ERROR: Invalid app user identifier "${appUser}".`);
-    }
-
-    const roleCheck = await adminClient.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [appUser]);
+    const roleCheck = await adminClient.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [appUser]);
     if (roleCheck.rowCount === 0) {
-      console.log(`Creating non-superuser application role "${appUser}"...`);
-      // Passwords are parameterized or sanitized
-      const sanitizedPass = appPassword.replace(/'/g, "''");
-      await adminClient.query(`CREATE USER ${appUser} WITH PASSWORD '${sanitizedPass}'`);
+      console.log(`[db:init] Creating restricted application role "${appUser}"...`);
+      await execFormatted(adminClient, 'CREATE USER %I WITH PASSWORD %L', appUser, appPassword);
+    } else {
+      console.log(`[db:init] Application role "${appUser}" already exists. Updating password.`);
+      await execFormatted(adminClient, 'ALTER USER %I WITH PASSWORD %L', appUser, appPassword);
     }
   } catch (error) {
-    console.error('Error checking/creating database:', error);
+    console.error('[db:init] Failed while creating database or role:', error);
     process.exit(1);
   } finally {
     await adminClient.end();
   }
 
-  // 2. Connect to the target database and execute migrations
-  const client = new Client({
-    ...dbConfig,
-    database: process.env.DB_NAME || 'deploymate',
+  const grantClient = new Client({
+    host: admin.host,
+    port: admin.port,
+    user: admin.user,
+    password: admin.password,
+    database: dbName,
   });
 
   try {
-    await client.connect();
-    console.log(`Connected to target database "${process.env.DB_NAME || 'deploymate'}".`);
-
-    // Run SQL migrations via Migration Runner
-    await runMigrations(client);
-
-    // 3. Seed Permissions & Initial Roles
-    const rolesToSeed = [
-      {
-        name: 'Super Admin',
-        permissions: {
-          all: true,
-          project: ['read', 'write', 'delete'],
-          pipeline: ['read', 'create', 'execute', 'cancel'],
-          deployment: ['read', 'create', 'promote', 'rollback'],
-          terraform: ['read', 'plan', 'apply'],
-          gitops: ['read', 'sync', 'rollback'],
-          incident: ['read', 'create', 'resolve'],
-          chaos: ['read', 'execute'],
-          security: ['read', 'override'],
-          ai: ['remediation.approve'],
-          users: ['manage'],
-          settings: ['manage']
-        }
-      },
-      {
-        name: 'DevOps Engineer',
-        permissions: {
-          project: ['read', 'write'],
-          pipeline: ['read', 'create', 'execute'],
-          deployment: ['read', 'create', 'promote', 'rollback'],
-          terraform: ['read', 'plan', 'apply'],
-          gitops: ['read', 'sync', 'rollback'],
-          incident: ['read', 'create', 'resolve'],
-          chaos: ['read', 'execute'],
-          security: ['read'],
-          ai: ['remediation.approve']
-        }
-      },
-      {
-        name: 'Developer',
-        permissions: {
-          project: ['read'],
-          pipeline: ['read', 'execute'],
-          deployment: ['read'],
-          gitops: ['read'],
-          terraform: ['read', 'plan'],
-          incident: ['read', 'create'],
-          security: ['read']
-        }
-      },
-      {
-        name: 'Viewer',
-        permissions: {
-          project: ['read'],
-          pipeline: ['read'],
-          deployment: ['read'],
-          gitops: ['read'],
-          terraform: ['read'],
-          incident: ['read'],
-          security: ['read']
-        }
-      }
-    ];
-
-    console.log('Seeding default roles...');
-    for (const r of rolesToSeed) {
-      await client.query(
-        `INSERT INTO roles (name, permissions) 
-         VALUES ($1, $2) 
-         ON CONFLICT (name) DO UPDATE SET permissions = $2`,
-        [r.name, JSON.stringify(r.permissions)]
-      );
-    }
-    console.log('Roles seeded.');
-
-    // 4. Seed Super Admin User
-    const superAdminRoleRes = await client.query("SELECT id FROM roles WHERE name = 'Super Admin'");
-    const adminRoleId = superAdminRoleRes.rows[0].id;
-
-    let adminEmail = process.env.INITIAL_ADMIN_EMAIL;
-    let adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
-
-    if (!adminEmail || !adminPassword) {
-      if (process.env.NODE_ENV === 'production') {
-        throw new Error('FATAL SECURITY ERROR: INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD environment variables are required in production mode.');
-      }
-      adminEmail = adminEmail || 'admin@deploymate.local';
-      adminPassword = adminPassword || 'AdminPass123!';
-      console.warn('⚠️ WARNING: Using default development admin credentials. Set INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD in production!');
-    }
-
-    const salt = await bcrypt.genSalt(12);
-    const passwordHash = await bcrypt.hash(adminPassword, salt);
-
-    const userCheck = await client.query("SELECT 1 FROM users WHERE email = $1", [adminEmail.toLowerCase().trim()]);
-    if (userCheck.rowCount === 0) {
-      console.log(`Seeding initial Super Admin user (${adminEmail})...`);
-      await client.query(
-        `INSERT INTO users (name, email, password_hash, role_id) 
-         VALUES ($1, $2, $3, $4)`,
-        ['Super Administrator', adminEmail.toLowerCase().trim(), passwordHash, adminRoleId]
-      );
-      console.log('Super Admin user seeded successfully.');
-    } else {
-      console.log('Super Admin user already exists.');
-    }
-
-    console.log('DEPLOYMATE Database migration & seeding completed successfully.');
+    await grantClient.connect();
+    console.log(`[db:init] Granting application privileges on "${dbName}" to "${appUser}".`);
+    await execFormatted(grantClient, 'GRANT CONNECT ON DATABASE %I TO %I', dbName, appUser);
+    await execFormatted(grantClient, 'GRANT USAGE, CREATE ON SCHEMA public TO %I', appUser);
+    await execFormatted(grantClient, 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO %I', appUser);
+    await execFormatted(grantClient, 'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO %I', appUser);
+    await execFormatted(grantClient, 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO %I', appUser);
+    await execFormatted(grantClient, 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO %I', appUser);
+    console.log('[db:init] Completed. Run db:migrate next, then db:seed.');
   } catch (error) {
-    console.error('Error during migrations and seeding:', error);
+    console.error('[db:init] Failed while granting privileges:', error);
     process.exit(1);
   } finally {
-    await client.end();
+    await grantClient.end();
   }
 }
 
-init();
+init().catch((error) => {
+  console.error('[db:init] Unhandled failure:', error);
+  process.exit(1);
+});

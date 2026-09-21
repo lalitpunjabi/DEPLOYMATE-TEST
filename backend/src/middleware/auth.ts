@@ -4,12 +4,11 @@ import { query } from '../config/db';
 import { hashToken, sendSafeError } from '../utils/securityUtils';
 
 export function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
+  const secret = process.env.JWT_SECRET?.trim();
   if (!secret || secret === 'deploymate-jwt-secret-key-change-in-production') {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL SECURITY ERROR: JWT_SECRET environment variable is missing or insecure in production mode.');
-    }
-    return 'deploymate-jwt-secret-key-development-only';
+    throw new Error(
+      'FATAL SECURITY ERROR: JWT_SECRET is missing or using a known insecure placeholder. Set a unique secret in the environment.'
+    );
   }
   return secret;
 }

@@ -204,9 +204,18 @@ export const Pipelines: React.FC = () => {
     }
   };
 
-  const connectWebSocket = (runId: string) => {
+  const connectWebSocket = async (runId: string) => {
+    const ticketRes = await fetch('/api/v1/auth/ws-ticket', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!ticketRes.ok) {
+      console.error('Failed to obtain WebSocket ticket');
+      return;
+    }
+    const { ticket } = await ticketRes.json();
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/logs?runId=${runId}&token=${token}`);
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/logs?runId=${encodeURIComponent(runId)}&ticket=${encodeURIComponent(ticket)}`);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {

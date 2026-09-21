@@ -2,29 +2,29 @@ import { Client } from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
 import { runMigrations } from '../services/migrationRunner';
+import { resolveRuntimeDbConfig } from './dbRuntimeConfig';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 async function migrate() {
-  console.log('Running DEPLOYMATE Database Migrations...');
+  console.log('[db:migrate] Running versioned SQL migrations only (no database creation, no seeding).');
 
-  const dbConfig = {
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres_dev_only',
-    database: process.env.DB_NAME || 'deploymate',
-  };
-
-  const client = new Client(dbConfig);
+  const cfg = resolveRuntimeDbConfig();
+  const client = new Client({
+    host: cfg.host,
+    port: cfg.port,
+    user: cfg.user,
+    password: cfg.password,
+    database: cfg.database,
+  });
 
   try {
     await client.connect();
-    console.log(`Connected to database "${dbConfig.database}". Running migration scripts...`);
+    console.log(`[db:migrate] Connected to "${cfg.database}" as runtime user "${cfg.user}".`);
     await runMigrations(client);
-    console.log('✅ Database migrations completed successfully.');
+    console.log('[db:migrate] Completed successfully.');
   } catch (error) {
-    console.error('❌ Migration failed:', error);
+    console.error('[db:migrate] Failed:', error);
     process.exit(1);
   } finally {
     await client.end();

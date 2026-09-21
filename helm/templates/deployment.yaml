@@ -1,11 +1,12 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-backend
+  name: backend
   labels:
     app.kubernetes.io/name: deploymate-backend
+    {{- include "deploymate.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.replicaCount.backend }}
   selector:
     matchLabels:
       app.kubernetes.io/name: deploymate-backend
@@ -14,21 +15,179 @@ spec:
       labels:
         app.kubernetes.io/name: deploymate-backend
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: backend
           image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag }}"
           imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
           ports:
             - name: http
-              containerPort: 5000
+              containerPort: {{ .Values.service.backend.port }}
               protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.service.backend.port | quote }}
+            - name: NODE_ENV
+              value: {{ .Values.env.nodeEnv | quote }}
+            - name: DB_HOST
+              value: {{ .Values.env.dbHost | quote }}
+            - name: DB_PORT
+              value: {{ .Values.env.dbPort | quote }}
+            - name: DB_NAME
+              value: {{ .Values.env.dbName | quote }}
+            - name: DB_APP_USER
+              value: {{ .Values.env.dbAppUser | quote }}
+            - name: DB_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: deploymate-secrets
+                  key: DB_APP_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: deploymate-secrets
+                  key: JWT_SECRET
+            - name: AI_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: deploymate-secrets
+                  key: AI_INTERNAL_TOKEN
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: deploymate-secrets
+                  key: GITHUB_WEBHOOK_SECRET
+            - name: AI_SERVICE_URL
+              value: http://ai-module:{{ .Values.service.ai.port }}
+            - name: FRONTEND_URL
+              value: {{ .Values.env.frontendUrl | quote }}
           livenessProbe:
             httpGet:
               path: /health
-              port: 5000
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
           readinessProbe:
             httpGet:
               path: /ready
-              port: 5000
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml .Values.resources.backend | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/name: deploymate-frontend
+    {{- include "deploymate.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount.frontend }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: deploymate-frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: deploymate-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: "{{ .Values.image.frontend.repository }}:{{ .Values.image.frontend.tag }}"
+          imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            - name: https
+              containerPort: 443
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources.frontend | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-module
+  labels:
+    app.kubernetes.io/name: deploymate-ai
+    {{- include "deploymate.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount.ai }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: deploymate-ai
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: deploymate-ai
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: ai-module
+          image: "{{ .Values.image.aiModule.repository }}:{{ .Values.image.aiModule.tag }}"
+          imagePullPolicy: {{ .Values.image.aiModule.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.ai.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.service.ai.port | quote }}
+            - name: ENVIRONMENT
+              value: production
+            - name: NODE_ENV
+              value: production
+            - name: AI_MODE
+              value: {{ .Values.env.aiMode | quote }}
+            - name: ALLOWED_ORIGINS
+              value: {{ .Values.env.allowedOrigins | quote }}
+            - name: AI_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: deploymate-secrets
+                  key: AI_INTERNAL_TOKEN
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: deploymate-secrets
+                  key: GEMINI_API_KEY
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources.ai | nindent 12 }}

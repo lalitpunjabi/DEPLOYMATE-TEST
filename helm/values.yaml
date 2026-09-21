@@ -1,4 +1,7 @@
-replicaCount: 2
+replicaCount:
+  backend: 2
+  frontend: 2
+  ai: 1
 
 image:
   backend:
@@ -15,17 +18,64 @@ image:
     pullPolicy: IfNotPresent
 
 service:
-  type: ClusterIP
-  port: 80
+  backend:
+    port: 5000
+  frontend:
+    port: 80
+  ai:
+    port: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: deploymate.example.com
+  tlsSecretName: deploymate-tls
+
+env:
+  nodeEnv: production
+  dbHost: postgres
+  dbPort: "5432"
+  dbName: deploymate
+  dbAppUser: deploymate_app
+  aiMode: simulated
+  frontendUrl: https://deploymate.example.com
+  allowedOrigins: http://backend:5000
+
+secrets:
+  # Leave empty and provide via --set or a sealed-secret / external secret manager.
+  dbAppPassword: ""
+  jwtSecret: ""
+  aiInternalToken: ""
+  githubWebhookSecret: ""
+  geminiApiKey: ""
 
 resources:
-  limits:
-    cpu: 500m
-    memory: 512Mi
-  requests:
-    cpu: 100m
-    memory: 256Mi
+  backend:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  frontend:
+    limits:
+      cpu: 250m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  ai:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
 
-nodeSelector: {}
-tolerations: []
-affinity: {}
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL

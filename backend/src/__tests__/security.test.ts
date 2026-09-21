@@ -1,6 +1,9 @@
 import assert from 'assert';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { hashToken } from '../utils/securityUtils';
+import { resolveRuntimeDbConfig, validateProductionRuntimeSecrets } from '../config/dbRuntimeConfig';
 
 async function runSecurityTests() {
   console.log('[Security Suite] Running DEPLOYMATE Mandatory Acceptance & Security Regression Tests...');
@@ -277,36 +280,80 @@ async function runSecurityTests() {
   assert.strictEqual(checkCmdNotInit('node dist/index.js'), true, 'Production CMD must strictly execute node dist/index.js');
   console.log('✅ Test 23 Passed: Production startup does not perform DB initialization');
 
-  // 24. Production startup fails when required secrets are missing
-  const validateProdSecretsEnv = (envVars: Record<string, string | undefined>) => {
-    const required = ['DB_PASSWORD', 'DB_APP_PASSWORD', 'JWT_SECRET', 'AI_INTERNAL_TOKEN', 'GITHUB_WEBHOOK_SECRET', 'INITIAL_ADMIN_EMAIL', 'INITIAL_ADMIN_PASSWORD'];
-    const insecure = ['postgrespassword', 'deploymate-jwt-secret-key-change-in-production', 'deploymate_app_password', 'AdminPass123!'];
-    const missing = required.filter(k => !envVars[k] || insecure.includes(envVars[k]!));
-    if (missing.length > 0) throw new Error(`FATAL SECURITY ERROR: Mandatory secrets missing: [${missing.join(', ')}]`);
-    return true;
-  };
-
+  // 24. Production startup fails when required runtime secrets are missing
   assert.throws(
-    () => validateProdSecretsEnv({ DB_PASSWORD: 'postgrespassword', JWT_SECRET: 'deploymate-jwt-secret-key-change-in-production' }),
+    () =>
+      validateProductionRuntimeSecrets({
+        NODE_ENV: 'production',
+        DB_PASSWORD: 'postgrespassword',
+        JWT_SECRET: 'deploymate-jwt-secret-key-change-in-production',
+      }),
     /FATAL SECURITY ERROR/,
     'Production mode with default secrets must fail immediately'
   );
-  assert.strictEqual(
-    validateProdSecretsEnv({
-      DB_PASSWORD: 'secure_prod_db_pass_123',
+  assert.doesNotThrow(() =>
+    validateProductionRuntimeSecrets({
+      NODE_ENV: 'production',
+      DB_APP_USER: 'deploymate_app',
       DB_APP_PASSWORD: 'secure_app_pass_456',
       JWT_SECRET: 'super_secret_jwt_key_789',
       AI_INTERNAL_TOKEN: 'internal_ai_token_abc',
       GITHUB_WEBHOOK_SECRET: 'wh_secret_xyz',
-      INITIAL_ADMIN_EMAIL: 'admin@prod.com',
-      INITIAL_ADMIN_PASSWORD: 'ComplexAdminPassword99!'
-    }),
-    true,
-    'Valid production environment passes secret check'
+    })
   );
   console.log('✅ Test 24 Passed: Production startup fails when required secrets are missing');
 
-  console.log('\n🎉 ALL 24 MANDATORY ACCEPTANCE SECURITY TESTS PASSED CLEANLY.');
+  // 25. Production runtime DB config never falls back to privileged credentials
+  assert.throws(
+    () =>
+      resolveRuntimeDbConfig({
+        NODE_ENV: 'production',
+        DB_USER: 'postgres',
+        DB_PASSWORD: 'super-secret-admin',
+        DB_NAME: 'deploymate',
+      }),
+    /DB_APP_USER/,
+    'Missing DB_APP_USER in production must fail fast'
+  );
+  assert.throws(
+    () =>
+      resolveRuntimeDbConfig({
+        NODE_ENV: 'production',
+        DB_APP_USER: 'deploymate_app',
+        DB_USER: 'postgres',
+        DB_PASSWORD: 'super-secret-admin',
+        DB_NAME: 'deploymate',
+      }),
+    /DB_APP_PASSWORD/,
+    'Missing DB_APP_PASSWORD in production must fail fast'
+  );
+  const runtime = resolveRuntimeDbConfig({
+    NODE_ENV: 'production',
+    DB_APP_USER: 'deploymate_app',
+    DB_APP_PASSWORD: 'runtime-only-secret',
+    DB_USER: 'postgres',
+    DB_PASSWORD: 'should-be-ignored',
+    DB_HOST: 'postgres',
+    DB_NAME: 'deploymate',
+  });
+  assert.strictEqual(runtime.user, 'deploymate_app');
+  assert.strictEqual(runtime.password, 'runtime-only-secret');
+  console.log('✅ Test 25 Passed: Production runtime uses only DB_APP_USER/DB_APP_PASSWORD');
+
+  // 26. db:init source is not a monolith (no migrations/seed)
+  const initJs = path.join(__dirname, '../config/initDb.js');
+  const initTs = path.join(__dirname, '../config/initDb.ts');
+  const initSrc = fs.readFileSync(fs.existsSync(initJs) ? initJs : initTs, 'utf8');
+  assert.equal(initSrc.includes('runMigrations'), false, 'db:init must not call runMigrations');
+  assert.equal(initSrc.includes('INITIAL_ADMIN_PASSWORD'), false, 'db:init must not seed admin users');
+  const seedJs = path.join(__dirname, '../config/seed.js');
+  const seedTs = path.join(__dirname, '../config/seed.ts');
+  const seedSrc = fs.readFileSync(fs.existsSync(seedJs) ? seedJs : seedTs, 'utf8');
+  assert.equal(seedSrc.includes('AdminPass123!'), false, 'seed must not contain a default admin password');
+  assert.equal(seedSrc.includes('admin123'), false, 'seed must not contain a default admin password');
+  console.log('✅ Test 26 Passed: DB lifecycle scripts are separated and have no default admin password');
+
+  console.log('\n🎉 ALL MANDATORY ACCEPTANCE SECURITY TESTS PASSED CLEANLY.');
 }
 
 if (require.main === module) {

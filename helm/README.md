@@ -1,38 +1,29 @@
-# DEPLOYMATE Kubernetes Helm Chart
+# DEPLOYMATE Helm Chart
 
-### Production Kubernetes Deployment Chart
+This chart deploys the DEPLOYMATE control plane components that exist in-repo:
 
-This directory contains the official **Helm 3** chart for deploying the complete **DEPLOYMATE Control Plane** onto Kubernetes (EKS, GKE, AKS, or Minikube/K3s).
+* backend Deployment + Service (`backend:5000`)
+* frontend Deployment + Service (`frontend:80`)
+* AI module Deployment + Service (`ai-module:8000`)
+* Ingress for HTTP(S) routing
+* Opaque Secret for runtime credentials
 
----
+PostgreSQL is **not** bundled. Point `env.dbHost` at a managed database or a separately installed Postgres instance, and run `db:init`, `db:migrate`, and `db:seed` before serving traffic.
 
-## 1. Chart Structure
+Kubernetes is a supported alternative to Docker Compose. Compose (`docker-compose.prod.yml`) remains the documented single-host production path.
 
-```text
-helm/
-├── Chart.yaml          # Helm chart metadata
-├── values.yaml         # Configuration values (images, replicas, ports, envs)
-└── templates/          # Kubernetes resource templates
-    ├── deployment.yaml # Deployments for Frontend, Backend, and AI Module
-    ├── service.yaml    # ClusterIP & LoadBalancer services
-    └── ingress.yaml    # Ingress routing controller rules
-```
+## Install
 
----
-
-## 2. Deployment Instructions
-
-### Install or Upgrade Helm Release
 ```bash
-helm upgrade --install deploymate ./helm --namespace deploymate --create-namespace
+helm lint ./helm
+helm template deploymate ./helm
+helm upgrade --install deploymate ./helm \
+  --namespace deploymate \
+  --create-namespace \
+  --set secrets.dbAppPassword='<runtime-db-password>' \
+  --set secrets.jwtSecret='<jwt-secret>' \
+  --set secrets.aiInternalToken='<ai-token>' \
+  --set secrets.githubWebhookSecret='<webhook-secret>'
 ```
 
-### Verify Deployed Pods
-```bash
-kubectl get pods -n deploymate
-```
-
-### Uninstall Release
-```bash
-helm uninstall deploymate -n deploymate
-```
+Do not commit real secret values into `values.yaml`.

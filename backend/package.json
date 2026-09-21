@@ -9,7 +9,9 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "db:init": "node dist/config/initDb.js",
     "db:migrate": "node dist/config/migrate.js",
-    "db:seed": "node dist/config/seed.js"
+    "db:seed": "node dist/config/seed.js",
+    "test:security": "node dist/__tests__/security.test.js",
+    "test:live": "node dist/__tests__/live.integration.test.js"
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",

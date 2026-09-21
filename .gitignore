@@ -7,11 +7,21 @@ web_modules/
 .env
 .env.local
 .env.*
+!.env.example
+!.env.production.example
+
+# TLS material (place real files locally; do not commit private keys)
+certs/*.pem
+certs/*.key
+certs/*.crt
 
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
 .venv/
 venv/
 ENV/

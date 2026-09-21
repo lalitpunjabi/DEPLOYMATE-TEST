@@ -307,8 +307,9 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
       }
 
       stage.duration = Math.round((Date.now() - stageStartTime) / 1000);
-    } catch (err: any) {
-      streamLog(`STAGE FAILED: ${err.message}`);
+    } catch (err: unknown) {
+      console.error('[pipelineEngine] Stage failed:', err);
+      streamLog('STAGE FAILED: An internal error occurred during this stage.');
       stage.status = 'FAILED';
       runFailed = true;
     }

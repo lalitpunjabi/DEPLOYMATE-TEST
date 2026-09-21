@@ -295,13 +295,22 @@ export const Deployments: React.FC = () => {
     }, 2000);
   };
 
-  const handleOpenTerminal = (pod: Pod) => {
+  const handleOpenTerminal = async (pod: Pod) => {
     setActiveTerminalPod(pod);
     setTerminalLogs([`Connecting to pod shell terminal: ${pod.name}...`]);
 
     try {
+      const ticketRes = await fetch('/api/v1/auth/ws-ticket', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!ticketRes.ok) {
+        setTerminalLogs(prev => [...prev, 'Failed to obtain WebSocket ticket.']);
+        return;
+      }
+      const { ticket } = await ticketRes.json();
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/terminal?pod=${pod.name}&namespace=${pod.namespace}&token=${token}`);
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/terminal?pod=${encodeURIComponent(pod.name)}&namespace=${encodeURIComponent(pod.namespace)}&ticket=${encodeURIComponent(ticket)}`);
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);

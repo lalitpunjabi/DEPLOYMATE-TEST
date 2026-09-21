@@ -1,130 +1,86 @@
 import { Client } from 'pg';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
+import { RBAC_ROLES } from './rbacRoles';
+import { resolveRuntimeDbConfig } from './dbRuntimeConfig';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 async function seed() {
-  console.log('Seeding DEPLOYMATE Roles & Default Super Admin User...');
+  console.log('[db:seed] Seeding RBAC roles and initial Super Admin (no schema migrations).');
 
-  const dbConfig = {
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres_dev_only',
-    database: process.env.DB_NAME || 'deploymate',
-  };
-
-  const client = new Client(dbConfig);
+  const cfg = resolveRuntimeDbConfig();
+  const client = new Client({
+    host: cfg.host,
+    port: cfg.port,
+    user: cfg.user,
+    password: cfg.password,
+    database: cfg.database,
+  });
 
   try {
     await client.connect();
-    console.log(`Connected to database "${dbConfig.database}". Seeding roles...`);
+    console.log(`[db:seed] Connected to "${cfg.database}" as runtime user "${cfg.user}".`);
 
-    const rolesToSeed = [
-      {
-        name: 'Super Admin',
-        permissions: {
-          all: true,
-          project: ['read', 'write', 'delete'],
-          pipeline: ['read', 'create', 'execute', 'cancel'],
-          deployment: ['read', 'create', 'promote', 'rollback'],
-          terraform: ['read', 'plan', 'apply'],
-          gitops: ['read', 'sync', 'rollback'],
-          incident: ['read', 'create', 'resolve'],
-          chaos: ['read', 'execute'],
-          security: ['read', 'override'],
-          ai: ['remediation.approve'],
-          users: ['manage'],
-          settings: ['manage'],
-        },
-      },
-      {
-        name: 'DevOps Engineer',
-        permissions: {
-          project: ['read', 'write'],
-          pipeline: ['read', 'create', 'execute'],
-          deployment: ['read', 'create', 'promote', 'rollback'],
-          terraform: ['read', 'plan', 'apply'],
-          gitops: ['read', 'sync', 'rollback'],
-          incident: ['read', 'create', 'resolve'],
-          chaos: ['read', 'execute'],
-          security: ['read'],
-          ai: ['remediation.approve'],
-        },
-      },
-      {
-        name: 'Developer',
-        permissions: {
-          project: ['read'],
-          pipeline: ['read', 'execute'],
-          deployment: ['read'],
-          gitops: ['read'],
-          terraform: ['read', 'plan'],
-          incident: ['read', 'create'],
-          security: ['read'],
-        },
-      },
-      {
-        name: 'Viewer',
-        permissions: {
-          project: ['read'],
-          pipeline: ['read'],
-          deployment: ['read'],
-          gitops: ['read'],
-          terraform: ['read'],
-          incident: ['read'],
-          security: ['read'],
-        },
-      },
-    ];
-
-    for (const r of rolesToSeed) {
+    for (const r of RBAC_ROLES) {
       await client.query(
-        `INSERT INTO roles (name, permissions) 
-         VALUES ($1, $2) 
+        `INSERT INTO roles (name, permissions)
+         VALUES ($1, $2)
          ON CONFLICT (name) DO UPDATE SET permissions = $2`,
         [r.name, JSON.stringify(r.permissions)]
       );
     }
-    console.log('Roles seeded.');
+    console.log('[db:seed] Roles upserted.');
 
-    // Seed Super Admin User
     const superAdminRoleRes = await client.query("SELECT id FROM roles WHERE name = 'Super Admin'");
+    if (superAdminRoleRes.rowCount === 0) {
+      throw new Error('Super Admin role is missing. Run db:migrate before db:seed.');
+    }
     const adminRoleId = superAdminRoleRes.rows[0].id;
 
-    let adminEmail = process.env.INITIAL_ADMIN_EMAIL;
+    const isProd = process.env.NODE_ENV === 'production';
+    const adminEmail = process.env.INITIAL_ADMIN_EMAIL?.trim();
     let adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
 
-    if (!adminEmail || !adminPassword) {
-      if (process.env.NODE_ENV === 'production') {
-        throw new Error('FATAL SECURITY ERROR: INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD environment variables are required in production mode.');
+    if (!adminEmail) {
+      throw new Error('FATAL: INITIAL_ADMIN_EMAIL is required for db:seed.');
+    }
+
+    if (!adminPassword) {
+      if (isProd) {
+        throw new Error('FATAL SECURITY ERROR: INITIAL_ADMIN_PASSWORD is required in production. No default password is used.');
       }
-      adminEmail = adminEmail || 'admin@deploymate.local';
-      adminPassword = adminPassword || 'AdminPass123!';
-      console.warn('⚠️ WARNING: Using default development admin credentials.');
+      adminPassword = crypto.randomBytes(18).toString('base64url');
+      console.log('[db:seed] INITIAL_ADMIN_PASSWORD was not set.');
+      console.log(`[db:seed] Generated one-time development Super Admin password for ${adminEmail}:`);
+      console.log(adminPassword);
+      console.log('[db:seed] This value is not stored in plaintext. Save it now; it will not be shown again.');
     }
 
-    const salt = await bcrypt.genSalt(12);
-    const passwordHash = await bcrypt.hash(adminPassword, salt);
+    if (adminPassword.length < 12) {
+      throw new Error('FATAL SECURITY ERROR: INITIAL_ADMIN_PASSWORD must be at least 12 characters.');
+    }
 
-    const userCheck = await client.query("SELECT 1 FROM users WHERE email = $1", [adminEmail.toLowerCase().trim()]);
+    const userCheck = await client.query('SELECT 1 FROM users WHERE email = $1', [adminEmail.toLowerCase()]);
     if (userCheck.rowCount === 0) {
-      console.log(`Seeding initial Super Admin user (${adminEmail})...`);
+      const salt = await bcrypt.genSalt(12);
+      const passwordHash = await bcrypt.hash(adminPassword, salt);
+      console.log(`[db:seed] Creating Super Admin user (${adminEmail.toLowerCase()})...`);
       await client.query(
-        `INSERT INTO users (name, email, password_hash, role_id) 
+        `INSERT INTO users (name, email, password_hash, role_id)
          VALUES ($1, $2, $3, $4)`,
-        ['Super Administrator', adminEmail.toLowerCase().trim(), passwordHash, adminRoleId]
+        ['Super Administrator', adminEmail.toLowerCase(), passwordHash, adminRoleId]
       );
-      console.log('Super Admin user seeded successfully.');
+      console.log('[db:seed] Super Admin created.');
     } else {
-      console.log('Super Admin user already exists.');
+      console.log('[db:seed] Super Admin user already exists; password was not changed.');
     }
 
-    console.log('✅ Database seeding completed successfully.');
+    console.log('[db:seed] Completed successfully.');
   } catch (error) {
-    console.error('❌ Seeding failed:', error);
+    console.error('[db:seed] Failed:', error);
     process.exit(1);
   } finally {
     await client.end();

@@ -4,39 +4,9 @@ import path from 'path';
 // Load environment variables immediately before module imports evaluate process.env
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-// Production Secrets Fail-Fast Guard
-if (process.env.NODE_ENV === 'production') {
-  const insecureDefaults = [
-    'postgrespassword',
-    'deploymate-jwt-secret-key-change-in-production',
-    'deploymate_app_password',
-    'AdminPass123!',
-    'deploymate-internal-ai-secret-token-dev-only'
-  ];
+import { validateProductionRuntimeSecrets } from './config/dbRuntimeConfig';
 
-  const requiredKeys = [
-    'DB_PASSWORD',
-    'DB_APP_PASSWORD',
-    'JWT_SECRET',
-    'AI_INTERNAL_TOKEN',
-    'GITHUB_WEBHOOK_SECRET',
-    'INITIAL_ADMIN_EMAIL',
-    'INITIAL_ADMIN_PASSWORD'
-  ];
-
-  const missingSecrets = requiredKeys.filter(key => {
-    const val = process.env[key];
-    return !val || val.trim().length === 0 || insecureDefaults.includes(val.trim());
-  });
-
-  if (missingSecrets.length > 0) {
-    throw new Error(
-      `FATAL SECURITY ERROR: Mandatory production secrets are unconfigured or using insecure default values: [${missingSecrets.join(
-        ', '
-      )}]. Deployment aborted.`
-    );
-  }
-}
+validateProductionRuntimeSecrets();
 
 import express from 'express';
 import http from 'http';
