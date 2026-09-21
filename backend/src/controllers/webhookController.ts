@@ -7,33 +7,27 @@ import { sendSafeError } from '../utils/securityUtils';
 
 const processedDeliveryIds = new Set<string>();
 
+const ALLOWED_WEBHOOK_EVENTS = ['push', 'pull_request', 'ping'];
+
 export async function handleGitHubWebhook(req: Request, res: Response): Promise<void> {
   const signature = req.headers['x-hub-signature-256'] as string;
   const eventType = (req.headers['x-github-event'] as string) || 'push';
   const deliveryId = req.headers['x-github-delivery'] as string;
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
-  // Webhook Replay Protection using persistent DB tracking & in-memory fallback
-  if (deliveryId) {
-    try {
-      const delCheck = await query(
-        `INSERT INTO webhook_deliveries (delivery_id) VALUES ($1) ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id`,
-        [deliveryId]
-      );
-      if (delCheck.rowCount === 0) {
-        res.status(200).json({ status: 'IGNORED', message: 'Duplicate webhook delivery ID detected.' });
-        return;
-      }
-    } catch {
-      if (processedDeliveryIds.has(deliveryId)) {
-        res.status(200).json({ status: 'IGNORED', message: 'Duplicate webhook delivery ID detected.' });
-        return;
-      }
-      processedDeliveryIds.add(deliveryId);
-    }
+  // 1. Mandatory Delivery ID Check
+  if (!deliveryId || deliveryId.trim().length === 0) {
+    res.status(400).json({ message: 'Missing X-GitHub-Delivery header.' });
+    return;
   }
 
-  // Fail closed if webhook secret missing in production
+  // 2. Event Whitelist Check
+  if (!ALLOWED_WEBHOOK_EVENTS.includes(eventType)) {
+    res.status(200).json({ status: 'IGNORED', message: `Unsupported GitHub event type: ${eventType}` });
+    return;
+  }
+
+  // 3. Fail closed if webhook secret missing in production or verify HMAC signature
   if (!secret) {
     if (process.env.NODE_ENV === 'production') {
       res.status(401).json({ message: 'Webhook authentication failed. Server webhook secret is unconfigured.' });
@@ -50,8 +44,8 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
       const rawPayload = (req as any).rawBody || (typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
       const digest = 'sha256=' + hmac.update(rawPayload).digest('hex');
 
-      const sigBuffer = Buffer.from(signature);
-      const digestBuffer = Buffer.from(digest);
+      const sigBuffer = Buffer.from(signature, 'utf8');
+      const digestBuffer = Buffer.from(digest, 'utf8');
 
       if (sigBuffer.length !== digestBuffer.length || !crypto.timingSafeEqual(sigBuffer, digestBuffer)) {
         res.status(401).json({ message: 'Invalid GitHub HMAC signature.' });
@@ -61,6 +55,30 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
       res.status(401).json({ message: 'Invalid GitHub HMAC signature.' });
       return;
     }
+  }
+
+  // 4. Persistent Replay Protection (AFTER HMAC signature verification)
+  try {
+    const delCheck = await query(
+      `INSERT INTO webhook_deliveries (delivery_id) VALUES ($1) ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id`,
+      [deliveryId]
+    );
+    if (delCheck.rowCount === 0) {
+      res.status(200).json({ status: 'IGNORED', message: 'Duplicate webhook delivery ID detected.' });
+      return;
+    }
+  } catch {
+    if (processedDeliveryIds.has(deliveryId)) {
+      res.status(200).json({ status: 'IGNORED', message: 'Duplicate webhook delivery ID detected.' });
+      return;
+    }
+    processedDeliveryIds.add(deliveryId);
+  }
+
+  // Ping event return safe response
+  if (eventType === 'ping') {
+    res.status(200).json({ status: 'SUCCESS', message: 'GitHub webhook ping pong successful.' });
+    return;
   }
 
   const payload = req.body;
@@ -104,14 +122,7 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
 
     const { project_id, pipeline_id, pipeline_name } = repoMatch.rows[0];
 
-    // Determine next run number
-    const countRes = await query(
-      `SELECT COUNT(*)::int as count FROM pipeline_runs WHERE pipeline_id = $1`,
-      [pipeline_id]
-    );
-    const runNumber = (countRes.rows[0].count || 0) + 1;
-
-    // Create pipeline run record
+    // Atomic insert for pipeline_run record to eliminate COUNT(*) race conditions
     const runRes = await query(
       `INSERT INTO pipeline_runs (
          pipeline_id, 
@@ -121,12 +132,14 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
          git_commit_sha, 
          git_commit_message, 
          triggered_by
-       ) VALUES ($1, $2, 'PENDING', $3, $4, $5, NULL)
-       RETURNING id`,
-      [pipeline_id, runNumber, branch, commitSha, commitMessage]
+       ) SELECT $1, COALESCE(MAX(run_number), 0) + 1, 'PENDING', $2, $3, $4, NULL
+         FROM pipeline_runs WHERE pipeline_id = $1
+       RETURNING id, run_number`,
+      [pipeline_id, branch, commitSha, commitMessage]
     );
 
     const runId = runRes.rows[0].id;
+    const runNumber = runRes.rows[0].run_number;
 
     // Record Audit Log entry
     await query(

@@ -12,6 +12,11 @@ export async function injectChaos(req: AuthenticatedRequest, res: Response): Pro
     return;
   }
 
+  if (!project_id && req.user?.role !== 'Super Admin') {
+    res.status(400).json({ message: 'Valid project ID is required for chaos experiment creation.' });
+    return;
+  }
+
   const duration = Number(duration_seconds);
   if (duration > 300) {
     res.status(400).json({ message: 'Safety Constraint: Maximum experiment duration is capped at 300 seconds.' });
@@ -112,7 +117,7 @@ export async function getChaosHistory(req: AuthenticatedRequest, res: Response):
            SELECT id FROM projects WHERE owner_id = $1
            UNION
            SELECT project_id FROM project_members WHERE user_id = $1
-         ) OR c.project_id IS NULL
+         )
          ORDER BY c.executed_at DESC`,
         [req.user?.id]
       );

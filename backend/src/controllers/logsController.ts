@@ -17,10 +17,15 @@ const simulatedLogs = [
 ];
 
 export async function getCentralizedLogs(req: AuthenticatedRequest, res: Response): Promise<void> {
-  const { pod, level, query, limit } = req.query;
+  const { projectId, pod, level, query: queryParam, limit } = req.query;
+
+  if (!projectId && req.user?.role !== 'Super Admin') {
+    res.status(403).json({ message: 'Forbidden. Valid project context is required for log retrieval.' });
+    return;
+  }
 
   try {
-    let filteredLogs = [...simulatedLogs];
+    let filteredLogs = simulatedLogs.map(log => ({ ...log, project_id: projectId || 'global' }));
 
     // Filter by pod
     if (pod) {
@@ -33,8 +38,8 @@ export async function getCentralizedLogs(req: AuthenticatedRequest, res: Respons
     }
 
     // Filter by keyword query
-    if (query) {
-      const q = String(query).toLowerCase();
+    if (queryParam) {
+      const q = String(queryParam).toLowerCase();
       filteredLogs = filteredLogs.filter(log => log.message.toLowerCase().includes(q));
     }
 
@@ -48,6 +53,7 @@ export async function getCentralizedLogs(req: AuthenticatedRequest, res: Respons
 
     res.status(200).json({
       execution_mode: 'SIMULATED',
+      project_id: projectId || 'global',
       logs: filteredLogs
     });
   } catch (error: any) {

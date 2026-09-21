@@ -7,7 +7,7 @@ const router = Router();
 // Secure all routes with JWT token authentication
 router.use(authenticateToken);
 
-router.get('/slo-health', checkPermission('incident.read'), getSloHealth);
+router.get('/slo-health', checkPermission('incident.read'), requireProjectAccess, getSloHealth);
 router.get('/incidents', checkPermission('incident.read'), requireProjectAccess, getIncidents);
 router.post('/incidents', checkPermission('incident.create'), requireProjectAccess, createIncident);
 router.post('/incidents/:id/postmortem', checkPermission('incident.resolve'), requireProjectAccess, generatePostmortem);

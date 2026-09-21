@@ -4,6 +4,40 @@ import path from 'path';
 // Load environment variables immediately before module imports evaluate process.env
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
+// Production Secrets Fail-Fast Guard
+if (process.env.NODE_ENV === 'production') {
+  const insecureDefaults = [
+    'postgrespassword',
+    'deploymate-jwt-secret-key-change-in-production',
+    'deploymate_app_password',
+    'AdminPass123!',
+    'deploymate-internal-ai-secret-token-dev-only'
+  ];
+
+  const requiredKeys = [
+    'DB_PASSWORD',
+    'DB_APP_PASSWORD',
+    'JWT_SECRET',
+    'AI_INTERNAL_TOKEN',
+    'GITHUB_WEBHOOK_SECRET',
+    'INITIAL_ADMIN_EMAIL',
+    'INITIAL_ADMIN_PASSWORD'
+  ];
+
+  const missingSecrets = requiredKeys.filter(key => {
+    const val = process.env[key];
+    return !val || val.trim().length === 0 || insecureDefaults.includes(val.trim());
+  });
+
+  if (missingSecrets.length > 0) {
+    throw new Error(
+      `FATAL SECURITY ERROR: Mandatory production secrets are unconfigured or using insecure default values: [${missingSecrets.join(
+        ', '
+      )}]. Deployment aborted.`
+    );
+  }
+}
+
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -11,7 +45,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
-import jwt from 'jsonwebtoken';
 import authRoutes from './routes/authRoutes';
 import adminRoutes from './routes/adminRoutes';
 import projectRoutes from './routes/projectRoutes';
@@ -28,8 +61,7 @@ import chaosRoutes from './routes/chaosRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import policyRoutes from './routes/policyRoutes';
 import pool, { query } from './config/db';
-import { getJwtSecret } from './middleware/auth';
-import { hashToken, sendSafeError } from './utils/securityUtils';
+import { sendSafeError } from './utils/securityUtils';
 
 const app = express();
 const server = http.createServer(app);
@@ -72,7 +104,12 @@ const corsOrigins =
     : [allowedOrigin, 'http://localhost', 'http://localhost:80', 'http://localhost:5173'];
 
 app.use(cors({ origin: corsOrigins, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({
+  limit: '2mb',
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 // Initialize WebSocket Servers for streaming pipeline logs and interactive pod terminal
 const wss = new WebSocketServer({ noServer: true });
@@ -161,8 +198,14 @@ server.on('upgrade', async (request, socket, head) => {
     return;
   }
 
-  // 1. Authenticate Ticket or Token
+  // 1. Authenticate Single-Use Ticket (JWT query parameters ?token= are rejected for security)
   let userId: string | null = null;
+
+  if (token) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nJWT query-string WebSocket authentication rejected. Use ws-ticket.');
+    socket.destroy();
+    return;
+  }
 
   if (ticket) {
     const ticketData = wsTickets.get(ticket);
@@ -170,36 +213,13 @@ server.on('upgrade', async (request, socket, head) => {
       userId = ticketData.userId;
       wsTickets.delete(ticket); // Single-use consumption
     } else {
-      wsTickets.delete(ticket);
+      if (ticketData) wsTickets.delete(ticket);
       socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid or expired ticket');
       socket.destroy();
       return;
     }
-  } else if (token) {
-    try {
-      const decoded = jwt.verify(token, getJwtSecret()) as { userId: string };
-      const tokenHashStr = hashToken(token);
-
-      const sessionCheck = await query(
-        `SELECT revoked_at, expires_at FROM user_sessions WHERE token_hash = $1`,
-        [tokenHashStr]
-      );
-
-      if (sessionCheck.rowCount && sessionCheck.rowCount > 0) {
-        if (sessionCheck.rows[0].revoked_at !== null || new Date(sessionCheck.rows[0].expires_at) < new Date()) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nSession revoked or expired');
-          socket.destroy();
-          return;
-        }
-      }
-      userId = decoded.userId;
-    } catch {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid authentication token');
-      socket.destroy();
-      return;
-    }
   } else {
-    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nAuthentication ticket or token required');
+    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nAuthentication ticket required');
     socket.destroy();
     return;
   }

@@ -15,4 +15,4 @@ COPY --from=builder /app/src/migrations ./dist/migrations
 COPY --from=builder /app/src/migrations ./src/migrations
 EXPOSE 5000
 USER node
-CMD ["sh", "-c", "node dist/config/initDb.js && node dist/index.js"]
+CMD ["node", "dist/index.js"]

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { query } from '../config/db';
@@ -62,7 +63,7 @@ export async function createProject(req: AuthenticatedRequest, res: Response): P
     );
 
     const newProject = projectInsertRes.rows[0];
-    const webhookSecret = 'whsec_' + Math.random().toString(36).substring(2, 15);
+    const webhookSecret = 'whsec_' + crypto.randomBytes(24).toString('hex');
 
     await query(
       `INSERT INTO repositories (project_id, github_repo_url, default_branch, webhook_secret) 

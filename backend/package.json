@@ -8,8 +8,8 @@
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "db:init": "node dist/config/initDb.js",
-    "db:migrate": "node dist/services/migrationRunner.js",
-    "db:seed": "node dist/config/initDb.js"
+    "db:migrate": "node dist/config/migrate.js",
+    "db:seed": "node dist/config/seed.js"
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",

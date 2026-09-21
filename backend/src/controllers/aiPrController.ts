@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { githubService } from '../services/githubService';
@@ -78,7 +79,7 @@ export async function createAiFixPr(req: AuthenticatedRequest, res: Response): P
     const prTitle = `[AIOps Auto-Fix] ${fixDescription || 'Automated Pipeline & Runtime Failure Remediation'}`;
     const prBody =
       `### 🤖 DEPLOYMATE Gemini AIOps Automated Patch\n\n` +
-      `**Triggered by Pipeline Run:** \`${runId || 'PR-RUN-' + Math.floor(Math.random() * 1000)}\`\n\n` +
+      `**Triggered by Pipeline Run:** \`${runId || 'PR-RUN-' + crypto.randomBytes(3).toString('hex')}\`\n\n` +
       `#### Root Cause & Remediation Summary:\n` +
       `${
         fixDescription ||

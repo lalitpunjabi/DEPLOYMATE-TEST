@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { sendSafeError } from '../utils/securityUtils';
 
 // Simulated metrics generator for offline showcase setups
 function generateSimulatedMetrics() {
@@ -37,7 +38,7 @@ export async function getLiveMetrics(_req: Request, res: Response): Promise<void
       source: prometheusUrl ? 'PROMETHEUS_LIVE' : 'SIMULATOR_ENGINE'
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve telemetry metrics.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve telemetry metrics.');
   }
 }
 
@@ -60,6 +61,6 @@ export async function getHistoricalMetrics(_req: Request, res: Response): Promis
     }
     res.status(200).json(history);
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve historical metrics.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve historical metrics.');
   }
 }

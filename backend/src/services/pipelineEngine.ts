@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { query } from '../config/db';
 import { activeLogStreams } from '../index';
 import { notificationService } from './notificationService';
@@ -42,7 +43,7 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
         { name: 'Deploy', status: 'PENDING' }
       ];
 
-  const commitSha = 'sha-' + Math.random().toString(16).substring(2, 10);
+  const commitSha = 'sha-' + crypto.randomBytes(4).toString('hex');
   const commitMessage = 'Refactor telemetry endpoints and optimize Docker multi-stage build cache';
 
   // Update run status to RUNNING
@@ -286,7 +287,7 @@ export async function executePipelineRun(runId: string, pipelineId: string): Pro
         streamLog(`- Replica 3: READY`);
         streamLog(`Rollout successfully completed!`);
 
-        const imageTag = 'v' + Math.floor(Math.random() * 10) + '.' + Math.floor(Math.random() * 10) + '.' + Math.floor(Math.random() * 100);
+        const imageTag = 'v1.' + crypto.randomInt(0, 10) + '.' + crypto.randomInt(1, 100);
         await query(
           `INSERT INTO deployments (project_id, pipeline_run_id, environment, namespace, deployment_name, image_tag, status, config_yaml)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,

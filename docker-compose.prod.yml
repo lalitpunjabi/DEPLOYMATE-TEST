@@ -48,6 +48,8 @@ services:
       DB_APP_PASSWORD: ${DB_APP_PASSWORD}
       DB_NAME: ${DB_NAME:-deploymate}
       JWT_SECRET: ${JWT_SECRET}
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD}
       AI_SERVICE_URL: http://ai-module:8000
@@ -83,6 +85,7 @@ services:
       PORT: 8000
       ENVIRONMENT: production
       NODE_ENV: production
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ALLOWED_ORIGINS: http://backend:5000
     # Port 8000 is isolated inside private internal container network
@@ -113,6 +116,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
     depends_on:
       backend:
         condition: service_healthy

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { k8sService } from '../services/k8sService';
+import { sendSafeError } from '../utils/securityUtils';
 
 export interface FinOpsWorkloadCost {
   name: string;
@@ -86,7 +87,6 @@ export async function getFinOpsMetrics(req: Request, res: Response): Promise<voi
       workloads
     });
   } catch (err: any) {
-    console.error('Error computing FinOps metrics:', err);
-    res.status(500).json({ message: 'Failed to compute FinOps metrics', error: err.message });
+    sendSafeError(res, err, 'Failed to compute FinOps metrics');
   }
 }

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
+import { sendSafeError } from '../utils/securityUtils';
 
 export interface ScanThreshold {
   pipeline_id: string;
@@ -39,7 +40,7 @@ export async function setScanThresholds(req: Request, res: Response): Promise<vo
       }
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to configure scan thresholds.', error: error.message });
+    sendSafeError(res, error, 'Failed to configure scan thresholds.');
   }
 }
 
@@ -90,7 +91,7 @@ export async function getPipelineSecurityReport(req: Request, res: Response): Pr
 
     res.status(200).json(scanRes.rows[0]);
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed to retrieve security report.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve security report.');
   }
 }
 

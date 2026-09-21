@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 export interface CreatePrParams {
   repoUrl: string;
   branchName: string;
@@ -33,7 +35,7 @@ export class GitHubService {
 
     if (!this.token || this.token === 'your_github_token_here') {
       console.log(`[GITHUB_SERVICE] No GITHUB_TOKEN set. Simulating PR creation for ${owner}/${repo}...`);
-      const prNum = Math.floor(Math.random() * 80) + 12;
+      const prNum = (crypto.randomBytes(2).readUInt16BE(0) % 80) + 12;
       return {
         success: true,
         prUrl: `https://github.com/${owner}/${repo}/pull/${prNum}`,
@@ -117,7 +119,7 @@ export class GitHubService {
       };
     } catch (err: any) {
       console.error('[GITHUB_SERVICE] Error creating GitHub PR:', err.message);
-      const prNum = Math.floor(Math.random() * 80) + 12;
+      const prNum = (crypto.randomBytes(2).readUInt16BE(0) % 80) + 12;
       return {
         success: true,
         prUrl: `https://github.com/${owner}/${repo}/pull/${prNum}`,

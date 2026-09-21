@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { executePipelineRun } from '../services/pipelineEngine';
+import { sendSafeError } from '../utils/securityUtils';
 
 export async function listPipelines(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { projectId } = req.query;
@@ -25,8 +26,7 @@ export async function listPipelines(req: AuthenticatedRequest, res: Response): P
 
     res.status(200).json(pipelinesRes.rows);
   } catch (error: any) {
-    console.error('List pipelines error:', error);
-    res.status(500).json({ message: 'Failed to retrieve pipelines.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve pipelines.');
   }
 }
 
@@ -59,8 +59,7 @@ export async function createPipeline(req: AuthenticatedRequest, res: Response): 
 
     res.status(201).json(insertRes.rows[0]);
   } catch (error: any) {
-    console.error('Create pipeline error:', error);
-    res.status(500).json({ message: 'Failed to create pipeline.', error: error.message });
+    sendSafeError(res, error, 'Failed to create pipeline.');
   }
 }
 
@@ -118,8 +117,7 @@ export async function runPipeline(req: AuthenticatedRequest, res: Response): Pro
       created_at: newRun.created_at
     });
   } catch (error: any) {
-    console.error('Run pipeline error:', error);
-    res.status(500).json({ message: 'Failed to trigger pipeline run.', error: error.message });
+    sendSafeError(res, error, 'Failed to trigger pipeline run.');
   }
 }
 
@@ -150,8 +148,7 @@ export async function listPipelineRuns(req: AuthenticatedRequest, res: Response)
 
     res.status(200).json(runsRes.rows);
   } catch (error: any) {
-    console.error('List pipeline runs error:', error);
-    res.status(500).json({ message: 'Failed to retrieve pipeline runs.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve pipeline runs.');
   }
 }
 
@@ -182,7 +179,6 @@ export async function getPipelineRun(req: AuthenticatedRequest, res: Response): 
 
     res.status(200).json(runRes.rows[0]);
   } catch (error: any) {
-    console.error('Get pipeline run error:', error);
-    res.status(500).json({ message: 'Failed to retrieve pipeline run details.', error: error.message });
+    sendSafeError(res, error, 'Failed to retrieve pipeline run details.');
   }
 }

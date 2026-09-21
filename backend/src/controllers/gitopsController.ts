@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Response } from 'express';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
@@ -47,8 +48,8 @@ export async function triggerGitOpsSync(req: AuthenticatedRequest, res: Response
   }
 
   try {
-    const revisionSha = 'git-' + Math.random().toString(16).substring(2, 10);
-    const syncDuration = Math.floor(Math.random() * 6) + 3;
+    const revisionSha = 'git-' + crypto.randomBytes(4).toString('hex');
+    const syncDuration = crypto.randomInt(3, 9);
 
     const insertRes = await query(
       `INSERT INTO gitops_sync_history (

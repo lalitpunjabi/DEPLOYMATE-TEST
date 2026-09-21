@@ -39,11 +39,11 @@ app.add_middleware(
 # Internal Token Middleware
 @app.middleware("http")
 async def verify_internal_token(request: Request, call_next):
-    if request.url.path in ["/", "/health", "/docs", "/openapi.json"]:
+    if request.url.path in ["/", "/health"]:
         return await call_next(request)
     
     token = request.headers.get("X-Internal-Token")
-    if token != AI_INTERNAL_TOKEN and os.getenv("ENVIRONMENT") == "production":
+    if token != AI_INTERNAL_TOKEN:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=401, content={"message": "Unauthorized internal AI service request."})
     
@@ -119,8 +119,7 @@ def root():
     return {
         "service": "Deploymate AI Engine API",
         "status": "HEALTHY",
-        "swagger_docs": "http://localhost:8000/docs",
-        "health_check": "http://localhost:8000/health"
+        "health_check": "/health"
     }
 
 @app.get("/health")

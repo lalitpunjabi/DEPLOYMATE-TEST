@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
-import { hashToken } from '../utils/securityUtils';
+import { hashToken, sendSafeError } from '../utils/securityUtils';
 
 export function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
@@ -169,22 +169,25 @@ export async function requireProjectAccess(
     return;
   }
 
-  let projectId =
-    req.params.projectId ||
-    req.body.projectId ||
-    (req.query.projectId as string) ||
-    req.params.id;
+  let projectId: string | null = null;
 
   try {
-    // Resolve child resource parameters to parent projectId
+    // 1. Always prioritize resolving target project_id from DB resource records FIRST to prevent IDOR parameter pollution
+    const stateId = req.params.stateId || req.body.stateId || (req.body.id && (req.baseUrl.includes('terraform') || req.path.includes('apply')) ? req.body.id : undefined);
+    if (stateId) {
+      const sRes = await query('SELECT project_id FROM terraform_states WHERE id = $1', [stateId]);
+      if (sRes.rowCount && sRes.rowCount > 0) projectId = sRes.rows[0].project_id;
+      else { res.status(404).json({ message: 'Terraform state not found.' }); return; }
+    }
+
     if (!projectId && req.params.pipelineId) {
       const pRes = await query('SELECT project_id FROM pipelines WHERE id = $1', [req.params.pipelineId]);
       if (pRes.rowCount && pRes.rowCount > 0) projectId = pRes.rows[0].project_id;
       else { res.status(404).json({ message: 'Pipeline not found.' }); return; }
     }
 
-    if (!projectId && (req.params.runId || req.params.pipelineRunId || req.query.runId)) {
-      const runId = req.params.runId || req.params.pipelineRunId || (req.query.runId as string);
+    const runId = req.params.runId || req.params.pipelineRunId || (req.query.runId as string);
+    if (!projectId && runId) {
       const prRes = await query(
         'SELECT p.project_id FROM pipeline_runs pr JOIN pipelines p ON pr.pipeline_id = p.id WHERE pr.id = $1',
         [runId]
@@ -193,38 +196,39 @@ export async function requireProjectAccess(
       else { res.status(404).json({ message: 'Pipeline run not found.' }); return; }
     }
 
-    if (!projectId && req.params.deploymentId) {
-      const dRes = await query('SELECT project_id FROM deployments WHERE id = $1', [req.params.deploymentId]);
+    const deploymentId = req.params.deploymentId || (req.body.deploymentId && (req.baseUrl.includes('deployment') || req.baseUrl.includes('kubernetes')) ? req.body.deploymentId : undefined);
+    if (!projectId && deploymentId) {
+      const dRes = await query('SELECT project_id FROM deployments WHERE id = $1', [deploymentId]);
       if (dRes.rowCount && dRes.rowCount > 0) projectId = dRes.rows[0].project_id;
       else { res.status(404).json({ message: 'Deployment not found.' }); return; }
     }
 
-    if (!projectId && (req.params.stateId || req.body.id || req.body.stateId)) {
-      const stateId = req.params.stateId || req.body.id || req.body.stateId;
-      const sRes = await query('SELECT project_id FROM terraform_states WHERE id = $1', [stateId]);
-      if (sRes.rowCount && sRes.rowCount > 0) projectId = sRes.rows[0].project_id;
-      else { res.status(404).json({ message: 'Terraform state not found.' }); return; }
-    }
-
-    if (!projectId && (req.params.incidentId || req.body.incidentId)) {
-      const incidentId = req.params.incidentId || req.body.incidentId;
+    const incidentId = req.params.incidentId || req.body.incidentId || (req.params.id && req.baseUrl.includes('sre') ? req.params.id : undefined);
+    if (!projectId && incidentId) {
       const iRes = await query('SELECT project_id FROM sre_incidents WHERE id = $1', [incidentId]);
-      if (iRes.rowCount && iRes.rowCount > 0 && iRes.rows[0].project_id) projectId = iRes.rows[0].project_id;
+      if (iRes.rowCount && iRes.rowCount > 0) projectId = iRes.rows[0].project_id;
+      else { res.status(404).json({ message: 'SRE Incident not found.' }); return; }
     }
 
-    if (!projectId && (req.params.chaosId || req.body.chaosId)) {
-      const chaosId = req.params.chaosId || req.body.chaosId;
+    const chaosId = req.params.chaosId || req.body.chaosId || (req.params.id && req.baseUrl.includes('chaos') ? req.params.id : undefined);
+    if (!projectId && chaosId) {
       const cRes = await query('SELECT project_id FROM chaos_experiments WHERE id = $1', [chaosId]);
-      if (cRes.rowCount && cRes.rowCount > 0 && cRes.rows[0].project_id) projectId = cRes.rows[0].project_id;
+      if (cRes.rowCount && cRes.rowCount > 0) projectId = cRes.rows[0].project_id;
+      else { res.status(404).json({ message: 'Chaos experiment not found.' }); return; }
     }
 
-    if (!projectId && (req.params.gitopsId || req.body.gitopsId || req.params.appName)) {
-      const gitopsId = req.params.gitopsId || req.body.gitopsId || req.params.appName;
+    const gitopsTarget = req.params.gitopsId || req.body.gitopsId || req.params.appName || req.body.app_name;
+    if (!projectId && gitopsTarget) {
       const gRes = await query(
         'SELECT DISTINCT project_id FROM gitops_sync_history WHERE id = $1 OR app_name = $1',
-        [gitopsId]
+        [gitopsTarget]
       );
-      if (gRes.rowCount === 1) projectId = gRes.rows[0].project_id;
+      if (gRes.rowCount === 1) {
+        projectId = gRes.rows[0].project_id;
+      } else if (gRes.rowCount === 0) {
+        const dRes = await query('SELECT DISTINCT project_id FROM deployments WHERE deployment_name = $1', [gitopsTarget]);
+        if (dRes.rowCount === 1) projectId = dRes.rows[0].project_id;
+      }
     }
 
     if (!projectId && req.params.scanId) {
@@ -239,7 +243,22 @@ export async function requireProjectAccess(
     if (!projectId && (req.params.namespace || req.query.namespace)) {
       const ns = req.params.namespace || (req.query.namespace as string);
       const nsRes = await query('SELECT DISTINCT project_id FROM deployments WHERE namespace = $1', [ns]);
-      if (nsRes.rowCount === 1) projectId = nsRes.rows[0].project_id;
+      if (nsRes.rowCount && nsRes.rowCount === 1) projectId = nsRes.rows[0].project_id;
+      else if (nsRes.rowCount && nsRes.rowCount > 1) {
+        res.status(403).json({ message: 'Forbidden. Ambiguous namespace mapping across multiple projects.' });
+        return;
+      }
+    }
+
+    // 2. If no entity lookup matched, fall back to checking explicit project ID parameters
+    if (!projectId) {
+      projectId =
+        req.params.projectId ||
+        req.body.projectId ||
+        req.body.project_id ||
+        (req.query.projectId as string) ||
+        (req.query.project_id as string) ||
+        (req.params.id && req.baseUrl.includes('projects') ? req.params.id : null);
     }
 
     if (!projectId) {
@@ -272,8 +291,8 @@ export async function requireProjectAccess(
     }
 
     res.status(403).json({ message: 'Forbidden. You do not have authorization to access this project resource.' });
-  } catch {
-    res.status(404).json({ message: 'Project not found.' });
+  } catch (error: any) {
+    sendSafeError(res, error, 'Project authorization check failed.');
   }
 }
 
