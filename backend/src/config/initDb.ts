@@ -67,6 +67,8 @@ async function init() {
 
   try {
     await grantClient.connect();
+    console.log(`[db:init] Enabling "uuid-ossp" extension on "${dbName}".`);
+    await grantClient.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
     console.log(`[db:init] Granting application privileges on "${dbName}" to "${appUser}".`);
     await execFormatted(grantClient, 'GRANT CONNECT ON DATABASE %I TO %I', dbName, appUser);
     await execFormatted(grantClient, 'GRANT USAGE, CREATE ON SCHEMA public TO %I', appUser);

@@ -233,7 +233,7 @@ helm upgrade --install deploymate ./helm \
 
 To demonstrate DEPLOYMATE in a technical evaluation or viva:
 
-1. Log into portal as `admin@deploymate.com` / `admin123`.
+1. Log into portal using your configured Super Admin bootstrap credentials (`INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD`).
 2. Click **DEMO SEQUENCE** in the top navigation bar to trigger the 8-stage centerpiece demonstration.
 3. Observe live pipeline execution, Trivy CVE scanning, Docker build, and GitOps reconciliation.
 4. Watch latency metrics spike -> SLO error budget degradation -> Automated P1 Incident creation.

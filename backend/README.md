@@ -56,7 +56,7 @@ backend/
 # Install dependencies
 npm install
 
-# Initialize database schema
+# Initialize database and restricted application role
 npm run db:init
 
 # Run versioned SQL migrations (001_init_schema.sql, 002_security_sessions_reset.sql)

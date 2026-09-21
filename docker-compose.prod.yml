@@ -7,6 +7,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
     environment:
       POSTGRES_DB: ${DB_NAME:-deploymate}
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -111,6 +117,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     # Only Nginx Reverse Proxy exposes public HTTP/HTTPS ports (80 & 443)
     ports:
       - "80:80"

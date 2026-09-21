@@ -71,9 +71,15 @@ cd DEPLOYMATE-TEST
 ```
 
 ### Step 2: Configure TLS Certificates (HTTPS)
-Place valid TLS certificates in `/etc/nginx/certs/`:
-- `/etc/nginx/certs/fullchain.pem`
-- `/etc/nginx/certs/privkey.pem`
+Place valid host-side TLS certificates in `./certs/` relative to the repository root:
+- `./certs/fullchain.pem`
+- `./certs/privkey.pem`
+
+* **Host-side location**: Generate or place certificates in `./certs/` on the host system (e.g. via `bash scripts/generate_certs.sh` for local/staging testing).
+* **Container Mount**: Docker Compose mounts host directory `./certs` to `/etc/nginx/certs` inside the frontend container as read-only (`:ro`).
+* **Production Certificate**: `fullchain.pem` must be the full CA-signed certificate chain for public production domains.
+* **Private Key**: `privkey.pem` must be the corresponding private key.
+* **Testing Note**: Self-signed certificates generated via `scripts/generate_certs.sh` are intended for local/staging testing only.
 
 ### Step 3: Launch Production Stack
 ```bash
