@@ -22,6 +22,13 @@ export interface AuthenticatedRequest extends Request {
     permissions: any;
     sessionId?: string;
   };
+  // Authoritative, DB-resolved project context set by requireProjectAccess AFTER the
+  // owning project has been resolved from the referenced resource and the caller has
+  // been shown to own/be a member of it. Controllers MUST read this instead of
+  // trusting client-supplied body/query project or resource ids.
+  projectContext?: {
+    projectId: string;
+  };
 }
 
 export async function authenticateToken(
@@ -162,11 +169,7 @@ export async function requireProjectAccess(
     return;
   }
 
-  // Super Admin can access all projects
-  if (req.user.role === 'Super Admin') {
-    next();
-    return;
-  }
+  const isSuperAdmin = req.user.role === 'Super Admin';
 
   let projectId: string | null = null;
 
@@ -179,8 +182,15 @@ export async function requireProjectAccess(
       else { res.status(404).json({ message: 'Terraform state not found.' }); return; }
     }
 
-    if (!projectId && req.params.pipelineId) {
-      const pRes = await query('SELECT project_id FROM pipelines WHERE id = $1', [req.params.pipelineId]);
+    // A pipeline may be referenced by route param, query (e.g. list-runs), or body
+    // (e.g. scan thresholds). Resolve its owning project from the DB for ALL of these
+    // so a controller never acts on a pipeline id supplied by an unauthorized client.
+    const pipelineRef =
+      req.params.pipelineId ||
+      (req.query.pipelineId as string) ||
+      (req.body && (req.body.pipeline_id || req.body.pipelineId));
+    if (!projectId && pipelineRef) {
+      const pRes = await query('SELECT project_id FROM pipelines WHERE id = $1', [pipelineRef]);
       if (pRes.rowCount && pRes.rowCount > 0) projectId = pRes.rows[0].project_id;
       else { res.status(404).json({ message: 'Pipeline not found.' }); return; }
     }
@@ -249,7 +259,10 @@ export async function requireProjectAccess(
       }
     }
 
-    // 2. If no entity lookup matched, fall back to checking explicit project ID parameters
+    // 2. No protected resource was referenced → fall back to an explicit project
+    //    target (create / list-within-a-project). Still membership-checked below, and
+    //    ONLY reachable when no resource id was supplied, so it can never override a
+    //    resource's real owning project.
     if (!projectId) {
       projectId =
         req.params.projectId ||
@@ -261,7 +274,21 @@ export async function requireProjectAccess(
     }
 
     if (!projectId) {
+      // Global administrative operations (no project scope) are Super-Admin only.
+      if (isSuperAdmin) {
+        next();
+        return;
+      }
       res.status(403).json({ message: 'Forbidden. Project context is required for this operation.' });
+      return;
+    }
+
+    // Attach the authoritative, DB-resolved project context for downstream controllers.
+    req.projectContext = { projectId };
+
+    // Super Admin is the only cross-tenant principal: authorized by role, no membership check.
+    if (isSuperAdmin) {
+      next();
       return;
     }
 

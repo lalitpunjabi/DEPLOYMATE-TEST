@@ -185,6 +185,27 @@ async function runLiveTests() {
   assert.ok(!listedIds.includes(projectBId), 'User A project listing must not expose User B project');
   console.log('✅ Live 6b: User A project listing excludes User B project');
 
+  // Live 6c: Pipeline-run listing is tenant-isolated even when the client pollutes
+  // the query with its OWN projectId (defeats resource→project parameter pollution
+  // which previously let a caller read another tenant's runs via ?pipelineId=).
+  const pipeB = await request('POST', '/api/v1/pipelines', {
+    headers: authUserB,
+    body: { projectId: projectBId, name: `b-pipeline-${suffix}` },
+  });
+  assert.ok(pipeB.status === 201 || pipeB.status === 200, `Owner should create a pipeline (got ${pipeB.status}: ${pipeB.body})`);
+  const pipelineBId = pipeB.json?.id;
+  assert.ok(pipelineBId, 'Created pipeline must return an id');
+
+  const stealRunsPlain = await request('GET', `/api/v1/pipelines/runs?pipelineId=${pipelineBId}`, { headers: authUserA });
+  assert.ok(stealRunsPlain.status === 403 || stealRunsPlain.status === 404, `Cross-tenant pipeline-run read must be denied (got ${stealRunsPlain.status})`);
+
+  const stealRunsPolluted = await request('GET', `/api/v1/pipelines/runs?pipelineId=${pipelineBId}&projectId=${projectAId}`, { headers: authUserA });
+  assert.ok(stealRunsPolluted.status === 403 || stealRunsPolluted.status === 404, `Pipeline-run read with a mismatched projectId must be denied (got ${stealRunsPolluted.status})`);
+
+  const ownRuns = await request('GET', `/api/v1/pipelines/runs?pipelineId=${pipelineBId}`, { headers: authUserB });
+  assert.strictEqual(ownRuns.status, 200, `Owner must list its own pipeline runs (got ${ownRuns.status})`);
+  console.log('✅ Live 6c: Pipeline-run IDOR (query pipelineId + projectId pollution) denied; owner allowed');
+
   const ticket = await request('POST', '/api/v1/auth/ws-ticket', { headers: authAdmin });
   assert.strictEqual(ticket.status, 200);
   assert.ok(ticket.json?.ticket);
@@ -197,6 +218,20 @@ async function runLiveTests() {
   const firstConnect = await wsUpgrade(`${wsBase}/ws/logs?runId=${validRunUuid}&ticket=${firstTicket}`);
   assert.strictEqual(firstConnect.ok, true, `First WebSocket upgrade with a valid ticket must succeed (got ${JSON.stringify(firstConnect)})`);
   console.log('✅ Live 8: WebSocket upgrade with a valid ticket succeeds');
+
+  // Live 8b: Concurrent consumption of a single-use ticket — exactly one upgrade wins.
+  // This validates the atomic `DELETE ... RETURNING` claim that backs multi-replica
+  // handoff: with a shared Postgres store a ticket is consumed globally, not per-process.
+  const ticket2 = await request('POST', '/api/v1/auth/ws-ticket', { headers: authAdmin });
+  const secondTicket = ticket2.json?.ticket;
+  assert.ok(secondTicket, 'Second WebSocket ticket must be issued');
+  const [raceA, raceB] = await Promise.all([
+    wsUpgrade(`${wsBase}/ws/logs?runId=${validRunUuid}&ticket=${secondTicket}`),
+    wsUpgrade(`${wsBase}/ws/logs?runId=${validRunUuid}&ticket=${secondTicket}`),
+  ]);
+  const successCount = [raceA, raceB].filter((r) => r.ok).length;
+  assert.strictEqual(successCount, 1, `A single-use ticket must be consumed exactly once under concurrency (successes=${successCount})`);
+  console.log('✅ Live 8b: Concurrent single-use ticket consumption allowed exactly one upgrade');
 
   // Live 9: The SAME ticket is single-use — a replayed connection is rejected
   const replayConnect = await wsUpgrade(`${wsBase}/ws/logs?runId=${validRunUuid}&ticket=${firstTicket}`);

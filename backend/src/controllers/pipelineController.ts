@@ -145,6 +145,25 @@ export async function listPipelineRuns(req: AuthenticatedRequest, res: Response)
   }
 
   try {
+    // Defense-in-depth: bind the query to the authoritative, DB-resolved project
+    // context so a pipeline id from another tenant can never be listed even if the
+    // supplied id were ever mismatched against the authorized project.
+    const ctxProjectId = req.projectContext?.projectId;
+    if (ctxProjectId) {
+      const runsRes = await query(
+        `SELECT r.id, r.run_number, r.status, r.trigger_type, r.git_branch, r.git_commit_sha, 
+                r.git_commit_message, r.started_at, r.completed_at, u.name as triggered_by_user
+         FROM pipeline_runs r
+         JOIN pipelines p ON r.pipeline_id = p.id
+         LEFT JOIN users u ON r.triggered_by = u.id
+         WHERE r.pipeline_id = $1 AND p.project_id = $2
+         ORDER BY r.run_number DESC`,
+        [pipelineId, ctxProjectId]
+      );
+      res.status(200).json(runsRes.rows);
+      return;
+    }
+
     const runsRes = await query(
       `SELECT r.id, r.run_number, r.status, r.trigger_type, r.git_branch, r.git_commit_sha, 
               r.git_commit_message, r.started_at, r.completed_at, u.name as triggered_by_user

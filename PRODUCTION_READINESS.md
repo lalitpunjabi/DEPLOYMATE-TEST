@@ -73,6 +73,10 @@ A previously latent defect is fixed here: routes authorize against **plural** ca
 
 `requireProjectAccess` resolves the owning project from the **database record** of the target resource (state / pipeline / run / deployment / incident / chaos / gitops / scan / namespace) before any user-supplied id, defeating parameter pollution; it then checks `owner_id` OR `project_members`, with Super Admin as the only cross-tenant override. Responses avoid existence leakage (403/404).
 
+**Authoritative context (hardening pass):** after resolution + authorization, the middleware attaches `req.projectContext = { projectId }`, which controllers are expected to read instead of re-trusting body/query ids. A client-supplied `projectId` is now used **only** when *no* protected resource id is present (create / list-within-a-project) and is always membership-checked; a referenced-but-nonexistent resource is a hard `404` so a bogus id can never fall through to the supplied project.
+
+- **Fixed this pass:** the middleware previously resolved pipelines only from `req.params.pipelineId`, so `GET /pipelines/runs?pipelineId=…` (and `POST /devsecops/scan-thresholds` `body.pipeline_id`) were **not** DB-resolved. Both are now resolved from param/query/body alike — closing a real IDOR where a caller could list another tenant's pipeline runs by pairing the victim's `pipelineId` with its own `projectId` (**LIVE VERIFIED**, live test 6c). The scan-thresholds path also stopped failing closed for legitimate project members. As defense-in-depth, `listPipelineRuns` re-binds its query to `req.projectContext.projectId`.
+
 Audit isolation (`auditService.queryAuditLogs`) implements three visibility classes: project-scoped (owner/members + Super Admin), personal (`user_id`, project NULL), and global (both NULL → Super Admin only). All write-controllers route audit through `insertAuditLog` with the resolved `project_id`.
 
 - **LIVE VERIFIED:** User A is denied (`403/404`) on User B's project-scoped read while succeeding on its own project (`200`); A's project listing excludes B's project (live tests 6 & 6b).
@@ -86,7 +90,8 @@ Audit isolation (`auditService.queryAuditLogs`) implements three visibility clas
 - `?token=<JWT>` query-string authentication is rejected outright.
 - `/ws/terminal` requires a ticket explicitly flagged `terminal:true`, held only by `Super Admin`/`DevOps Engineer`, plus namespace→project scope match.
 - **LIVE VERIFIED:** real `ws` upgrade succeeds with a valid ticket (`101`); replaying the consumed ticket → `401`; JWT query auth → `401`; malformed ticket → `401` (live tests 8–11).
-- **NOT VERIFIED:** true horizontal multi-replica handoff (ticket created by replica A consumed by replica B) — the store is Postgres-backed and correct by design, but a 2-replica race test was not run here (see §23).
+- **LIVE VERIFIED (concurrency):** two simultaneous upgrades presented with the *same* ticket result in **exactly one** success — the `DELETE … RETURNING` claim is globally atomic on the shared Postgres store (**live test 8b**). This is the property that underpins correct behavior across replicas, since every replica reads the same table.
+- **NOT VERIFIED:** running two *separate* backend processes behind a load balancer (the store is Postgres-shared and the atomicity above is proven, but a physical 2-replica deployment was not stood up here — see §23).
 
 ---
 
@@ -190,7 +195,7 @@ Backend `tsc` build and frontend `vite build` — **STATIC VERIFIED**, exit 0.
 Against a genuinely running `docker-compose.prod.yml` stack — **LIVE VERIFIED**:
 - `docker compose config -q` → exit 0; three images built; `ps` shows backend/db/ai **healthy**, frontend up; **only 80/443 published** (5000/8000/5432 internal).
 - `db:init` → `db:migrate` (applied `003_hardening.sql`) → `db:seed` all exit 0.
-- **Live integration suite — 15/15 PASSED**: health/ready, login, session revocation, Developer-cannot-create (least privilege), cross-tenant deny + owner allow, listing excludes other tenant, WS ticket issue, real WS `101` upgrade, replay→401, JWT-query→401, malformed→401, password policy 400/201, webhook HMAC + replay, and admin-disabled user loses access immediately + cannot re-login (live test 14).
+- **Live integration suite — 17/17 PASSED**: health/ready, login, session revocation, Developer-cannot-create (least privilege), cross-tenant deny + owner allow, listing excludes other tenant, **pipeline-run IDOR/pollution denied + owner allowed (6c)**, WS ticket issue, real WS `101` upgrade, **concurrent single-use consumption → exactly one success (8b)**, replay→401, JWT-query→401, malformed→401, password policy 400/201, webhook HMAC + replay, and admin-disabled user loses access immediately + cannot re-login (live test 14).
 - HTTPS 301 redirect + header set; `/metrics` not publicly exposed.
 
 ## 22. Simulated Features (by design)
@@ -200,7 +205,7 @@ GitOps reconcile/sync/drift, Terraform plan/apply, Chaos injection, Kubernetes r
 ## 23. Known Limitations
 
 1. **Rate limiting is process-local** (`express-rate-limit` in-memory). Behind >1 replica without sticky sessions, effective limits are N× the configured value. Not a correctness/isolation issue, but the enforcement ceiling scales with replica count. Recommend a shared store if edge rate limits must be global.
-2. **Multi-replica WS handoff not load-tested** — the Postgres ticket store is correct by construction, but no 2-replica concurrency test was run.
+2. **Multi-replica WS handoff:** concurrent single-use consumption of a ticket is **live-verified** to admit exactly one winner (test 8b), proving the shared-store atomicity. What remains untested is a physical **two-process deployment behind a load balancer** (same shared Postgres DB, but separate processes were not stood up here).
 3. **External LIVE integrations (K8s, Prometheus, Gemini, Trivy/Sonar/GitHub) NOT VERIFIED** end-to-end; they must be validated against the real systems in the target environment before relying on their `LIVE` paths.
 4. The AI-container internal-token rejection and Gemini `LIVE` branch were verified statically/by labelling, not against a live AI+Gemini deployment in this run.
 5. **Frontend code-quality lint is advisory, not a CI gate.** `npm run lint` reports 58 pre-existing stylistic findings (mostly `@typescript-eslint/no-explicit-any` and the strict React-19 `react-hooks` purity/set-state rules) unrelated to security. The frontend `tsc -b` typecheck and production `vite build` are green and are what CI enforces. Clearing the hook/`any` findings is an out-of-scope refactor deferred to avoid regressions; no lint gate was disabled or `|| true`-masked to hide them.
