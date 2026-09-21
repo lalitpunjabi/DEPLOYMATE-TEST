@@ -84,9 +84,12 @@ jobs:
           node-version: '20'
 
       - name: Install & Build
+        # NODE_ENV=production is set at job scope (needed to exercise the real
+        # production startup path), but that makes `npm ci` skip devDependencies
+        # (@types/*), which breaks `tsc`. Force dev deps for the build.
         run: |
           cd backend
-          npm ci
+          npm ci --include=dev
           npm run build
 
       - name: Provision DB (init + migrate + seed)
