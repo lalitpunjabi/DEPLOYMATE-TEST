@@ -13,10 +13,21 @@ export async function runMigrations(client: Client): Promise<void> {
     );
   `);
 
-  const migrationsDir = path.join(__dirname, '../migrations');
-  if (!fs.existsSync(migrationsDir)) {
-    console.log('[Migration Runner] No migrations directory found.');
-    return;
+  // `tsc` does NOT copy `.sql` assets into `dist`, so resolve the migrations
+  // directory from every supported layout instead of assuming one:
+  //   dist/migrations          -> production/Docker (Dockerfile copies src/migrations here)
+  //   src/migrations           -> raw `npm run build` + `node dist/...` in CI, and ts-node dev
+  const candidateDirs = [
+    path.join(__dirname, '../migrations'), // compiled sibling of services/ (dist or src)
+    path.join(__dirname, '../../src/migrations'), // repo source tree when running compiled dist
+  ];
+  const migrationsDir = candidateDirs.find(
+    (dir) => fs.existsSync(dir) && fs.readdirSync(dir).some((f) => f.endsWith('.sql'))
+  );
+  if (!migrationsDir) {
+    throw new Error(
+      `[Migration Runner] No migrations directory containing .sql files was found (looked in: ${candidateDirs.join(', ')}). Aborting so downstream seeding does not run against an un-migrated schema.`
+    );
   }
 
   const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
