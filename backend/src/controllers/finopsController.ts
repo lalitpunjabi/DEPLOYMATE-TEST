@@ -19,7 +19,8 @@ export interface FinOpsWorkloadCost {
 export async function getFinOpsMetrics(req: Request, res: Response): Promise<void> {
   try {
     const namespace = (req.query.namespace as string) || 'default';
-    const deployments = await k8sService.getDeployments(namespace);
+    const deploymentsResult = await k8sService.getDeployments(namespace);
+    const deployments = deploymentsResult.data;
 
     // Cost rates (AWS EKS benchmark: $0.0405/vCPU/hr, $0.00544/GB/hr)
     const CPU_HOURLY_RATE = 0.0405;
@@ -32,8 +33,8 @@ export async function getFinOpsMetrics(req: Request, res: Response): Promise<voi
 
     for (const dep of deployments) {
       const replicas = dep.replicas || 1;
-      
-      // Compute benchmark usage metrics based on deployment name
+
+      // Static benchmark usage profile (not measured from a live metrics pipeline)
       let requestedCpu = 2.0;
       let usedCpu = 0.45;
       let requestedMem = 4.0;
@@ -81,6 +82,9 @@ export async function getFinOpsMetrics(req: Request, res: Response): Promise<voi
     res.status(200).json({
       currency: 'USD',
       namespace,
+      // Deployment inventory mode + static usage benchmark profiles make this analysis simulated
+      execution_mode: 'SIMULATED',
+      notice: 'Cost model uses published AWS EKS benchmark rates and static usage profiles. Kubernetes deployment inventory source: ' + deploymentsResult.execution_mode + '.',
       totalMonthlyCostUsd: Math.round(totalMonthlyCostUsd * 100) / 100,
       totalMonthlySavingsUsd: Math.round(totalMonthlySavingsUsd * 100) / 100,
       potentialSavingsPercentage: totalMonthlyCostUsd > 0 ? Math.round((totalMonthlySavingsUsd / totalMonthlyCostUsd) * 100) : 0,

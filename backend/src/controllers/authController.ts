@@ -4,19 +4,52 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { query } from '../config/db';
 import { AuthenticatedRequest, getJwtSecret } from '../middleware/auth';
-import { hashToken, sendSafeError } from '../utils/securityUtils';
-
-export const wsTickets = new Map<string, { userId: string; expiresAt: number }>();
+import { hashToken, sendSafeError, validatePasswordStrength, isValidUuid } from '../utils/securityUtils';
+import { createWsTicket as storeWsTicket, WS_TICKET_TTL_SECONDS } from '../services/wsTicketStore';
 
 export async function createWsTicket(req: AuthenticatedRequest, res: Response): Promise<void> {
   if (!req.user) {
     res.status(401).json({ message: 'Unauthorized.' });
     return;
   }
-  const ticket = crypto.randomBytes(24).toString('hex');
-  const expiresAt = Date.now() + 60 * 1000; // 60-second single-use ticket
-  wsTickets.set(ticket, { userId: req.user.id, expiresAt });
-  res.status(200).json({ ticket, expires_in: 60 });
+
+  // Optional project/terminal association supplied at issue time is validated strictly.
+  const { projectId, terminal } = req.body || {};
+  let scopedProjectId: string | null = null;
+
+  if (projectId !== undefined && projectId !== null) {
+    if (!isValidUuid(projectId)) {
+      res.status(400).json({ message: 'Invalid projectId supplied for WebSocket ticket.' });
+      return;
+    }
+    if (req.user.role !== 'Super Admin') {
+      const accessRes = await query(
+        `SELECT 1 FROM projects p
+         WHERE p.id = $1 AND (p.owner_id = $2 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id = $2))`,
+        [projectId, req.user.id]
+      );
+      if (!accessRes.rowCount) {
+        res.status(403).json({ message: 'Forbidden. You do not have authorization for this project.' });
+        return;
+      }
+    } else {
+      const existsRes = await query('SELECT 1 FROM projects WHERE id = $1', [projectId]);
+      if (!existsRes.rowCount) {
+        res.status(404).json({ message: 'Project not found.' });
+        return;
+      }
+    }
+    scopedProjectId = projectId;
+  }
+
+  const allowsTerminal = terminal === true && (req.user.role === 'Super Admin' || req.user.role === 'DevOps Engineer');
+
+  try {
+    const ticket = await storeWsTicket(req.user.id, { projectId: scopedProjectId, allowsTerminal });
+    res.status(200).json({ ticket, expires_in: WS_TICKET_TTL_SECONDS });
+  } catch (error: any) {
+    sendSafeError(res, error, 'Failed to issue WebSocket ticket.');
+  }
 }
 
 export async function register(req: Request, res: Response): Promise<void> {
@@ -27,8 +60,9 @@ export async function register(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  if (password.length < 8) {
-    res.status(400).json({ message: 'Password must be at least 8 characters long.' });
+  const passwordError = validatePasswordStrength(password);
+  if (passwordError) {
+    res.status(400).json({ message: passwordError });
     return;
   }
 
@@ -250,8 +284,9 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  if (newPassword.length < 8) {
-    res.status(400).json({ message: 'New password must be at least 8 characters long.' });
+  const newPasswordError = validatePasswordStrength(newPassword);
+  if (newPasswordError) {
+    res.status(400).json({ message: newPasswordError });
     return;
   }
 

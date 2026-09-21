@@ -3,6 +3,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { sendSafeError } from '../utils/securityUtils';
+import { insertAuditLog, queryAuditLogs } from '../services/auditService';
 
 export async function listProjects(req: AuthenticatedRequest, res: Response): Promise<void> {
   if (!req.user) {
@@ -91,12 +92,16 @@ export async function createProject(req: AuthenticatedRequest, res: Response): P
 
     await query('COMMIT');
 
-    // Audit log
-    await query(
-      `INSERT INTO audit_logs (user_id, action, resource, resource_id, details)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [req.user.id, 'CREATE', 'PROJECT', newProject.id, JSON.stringify({ name, repo: github_repo_url, environment })]
-    );
+    // Audit log (project-scoped)
+    await insertAuditLog({
+      userId: req.user.id,
+      action: 'CREATE',
+      resource: 'PROJECT',
+      resourceId: newProject.id,
+      projectId: newProject.id,
+      details: { name, repo: github_repo_url, environment },
+      req,
+    });
 
     res.status(201).json({
       ...newProject,
@@ -130,12 +135,16 @@ export async function deleteProject(req: AuthenticatedRequest, res: Response): P
 
     await query('DELETE FROM projects WHERE id = $1', [id]);
 
-    // Audit log
-    await query(
-      `INSERT INTO audit_logs (user_id, action, resource, resource_id, details)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [req.user.id, 'DELETE', 'PROJECT', id, JSON.stringify({ name: projectName })]
-    );
+    // Audit log. project_id intentionally NOT referenced here: the project row
+    // no longer exists (FK ON DELETE), so this stays a personal system event.
+    await insertAuditLog({
+      userId: req.user.id,
+      action: 'DELETE',
+      resource: 'PROJECT',
+      resourceId: id,
+      details: { name: projectName },
+      req,
+    });
 
     res.status(200).json({ message: 'Project deleted successfully.' });
   } catch (error: any) {
@@ -143,18 +152,12 @@ export async function deleteProject(req: AuthenticatedRequest, res: Response): P
   }
 }
 
-export async function getAuditLogs(_req: AuthenticatedRequest, res: Response): Promise<void> {
+export async function getAuditLogs(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const auditRes = await query(
-      `SELECT a.id, a.action, a.resource, a.resource_id, a.details, a.ip_address, a.created_at,
-              u.name as user_name, u.email as user_email
-       FROM audit_logs a
-       LEFT JOIN users u ON a.user_id = u.id
-       ORDER BY a.created_at DESC
-       LIMIT 100`
-    );
-
-    res.status(200).json(auditRes.rows);
+    // Tenant-isolated: Super Admin sees everything; normal users only see rows
+    // for their own projects plus their own personal system events.
+    const rows = await queryAuditLogs(req.user, 100);
+    res.status(200).json(rows);
   } catch (error: any) {
     sendSafeError(res, error, 'Failed to retrieve audit logs.', 500);
   }

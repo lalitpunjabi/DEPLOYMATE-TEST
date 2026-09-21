@@ -7,6 +7,7 @@ This document details the security model, role-based access control (RBAC), sess
 ## 1. Authentication & Session Architecture
 
 - **Stateful JWT Revocation**: Every login generates an 8-hour access token stored as a SHA-256 hash in `user_sessions`. Logging out or resetting passwords updates `revoked_at = NOW()`, immediately invalidating token access.
+- **Unified Password Policy**: A single standard is enforced across registration, password reset, password change, and Super Admin seeding — minimum **12 characters**, maximum 128, requiring lowercase + uppercase + digit + special character (`validatePasswordStrength`, `PASSWORD_MIN_LENGTH = 12`). No endpoint may apply a weaker rule.
 - **Strict Role Assignment**: Public registration (`/api/v1/auth/register`) enforces the `'Developer'` role. Caller attempts to request `'Super Admin'` or `'DevOps Engineer'` are ignored server-side.
 - **Super Admin Management**: Admin endpoints under `/api/v1/admin/` allow Super Admins to view active user sessions, update roles, toggle user active status (`is_active`), and revoke sessions.
 
@@ -46,6 +47,7 @@ This document details the security model, role-based access control (RBAC), sess
 - **Persistent Database Replay Protection**: `X-GitHub-Delivery` header is checked against PostgreSQL `webhook_deliveries` with `INSERT ... ON CONFLICT DO NOTHING`. Replayed delivery IDs return HTTP 200 IGNORED without re-triggering CI pipelines.
 - **Deterministic Repository Mapping**: GitHub repos must match a single unique project mapping. Ambiguous repository URLs fail closed.
 - **Internal AI Service Authentication**: FastAPI AI module requires `X-Internal-Token` matching `AI_INTERNAL_TOKEN` on all internal requests. Requests missing or with invalid internal tokens fail closed.
+- **Bounded Delivery Retention**: `webhook_deliveries` replay-protection rows are retained for **7 days** (the replay window) and pruned by an hourly retention sweeper that also clears expired `ws_tickets`, consumed/expired `password_reset_tokens`, and expired `user_sessions`. The window is intentionally not shortened so recent deliveries cannot be replayed.
 
 ---
 

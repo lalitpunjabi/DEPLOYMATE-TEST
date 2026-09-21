@@ -1,11 +1,26 @@
 import { Request, Response } from 'express';
-import { aiService } from '../services/aiService';
+import { aiService, isAiUnavailable } from '../services/aiService';
 import { sendSafeError } from '../utils/securityUtils';
 
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_LOG_LENGTH = 50000;
 const MAX_CONFIG_LENGTH = 50000;
 const MAX_HISTORY_ITEMS = 20;
+
+/**
+ * Hardening spec §5: when the AI module is down we return an honest 503
+ * DEGRADED response. No fabricated fallback diagnostics are ever served.
+ */
+function handleAiError(res: Response, error: unknown, genericMessage: string): void {
+  if (isAiUnavailable(error)) {
+    res.status(503).json({
+      execution_mode: 'DEGRADED',
+      message: `AI service temporarily unavailable for ${error.feature}. No AI analysis was performed.`,
+    });
+    return;
+  }
+  sendSafeError(res, error as Error, genericMessage, 500);
+}
 
 export async function failureAnalysis(req: Request, res: Response): Promise<void> {
   const { logs } = req.body;
@@ -21,7 +36,7 @@ export async function failureAnalysis(req: Request, res: Response): Promise<void
     const analysis = await aiService.analyzeFailure(logs);
     res.status(200).json(analysis);
   } catch (error: any) {
-    sendSafeError(res, error, 'Failed to process logs failure analysis.', 500);
+    handleAiError(res, error, 'Failed to process logs failure analysis.');
   }
 }
 
@@ -39,7 +54,7 @@ export async function logAnalysis(req: Request, res: Response): Promise<void> {
     const analysis = await aiService.analyzeLogs(logs);
     res.status(200).json(analysis);
   } catch (error: any) {
-    sendSafeError(res, error, 'Failed to process app logs analysis.', 500);
+    handleAiError(res, error, 'Failed to process app logs analysis.');
   }
 }
 
@@ -57,7 +72,7 @@ export async function riskAssessment(req: Request, res: Response): Promise<void>
     const assessment = await aiService.assessRisk(config_yaml);
     res.status(200).json(assessment);
   } catch (error: any) {
-    sendSafeError(res, error, 'Failed to assess manifest risks.', 500);
+    handleAiError(res, error, 'Failed to assess manifest risks.');
   }
 }
 
@@ -75,7 +90,7 @@ export async function pipelineGenerator(req: Request, res: Response): Promise<vo
     const pipeline = await aiService.generatePipeline(project_type);
     res.status(200).json(pipeline);
   } catch (error: any) {
-    sendSafeError(res, error, 'Failed to generate pipeline workflow.', 500);
+    handleAiError(res, error, 'Failed to generate pipeline workflow.');
   }
 }
 
@@ -97,7 +112,7 @@ export async function chatAssistant(req: Request, res: Response): Promise<void> 
     const reply = await aiService.chat(message, history || []);
     res.status(200).json(reply);
   } catch (error: any) {
-    sendSafeError(res, error, 'Failed to process chat query.', 500);
+    handleAiError(res, error, 'Failed to process chat query.');
   }
 }
 

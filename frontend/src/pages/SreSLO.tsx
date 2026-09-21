@@ -72,9 +72,15 @@ export const SreSLO: React.FC = () => {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
-      if (sloRes.ok) setSlos(await sloRes.json());
+      if (sloRes.ok) {
+        const sloData = await sloRes.json();
+        setSlos(Array.isArray(sloData) ? sloData : (sloData.targets || []));
+      }
       if (incRes.ok) setIncidents(await incRes.json());
-      if (healingRes.ok) setHealingActions(await healingRes.json());
+      if (healingRes.ok) {
+        const healingData = await healingRes.json();
+        setHealingActions(Array.isArray(healingData) ? healingData : (healingData.actions || []));
+      }
     } catch (err) {
       console.error('Failed to load SRE telemetry data', err);
     }

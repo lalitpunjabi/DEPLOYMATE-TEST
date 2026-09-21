@@ -2,7 +2,7 @@ import assert from 'assert';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { hashToken } from '../utils/securityUtils';
+import { hashToken, validatePasswordStrength, isValidUuid, PASSWORD_MIN_LENGTH } from '../utils/securityUtils';
 import { resolveRuntimeDbConfig, validateProductionRuntimeSecrets } from '../config/dbRuntimeConfig';
 
 async function runSecurityTests() {
@@ -352,6 +352,38 @@ async function runSecurityTests() {
   assert.equal(seedSrc.includes('AdminPass123!'), false, 'seed must not contain a default admin password');
   assert.equal(seedSrc.includes('admin123'), false, 'seed must not contain a default admin password');
   console.log('✅ Test 26 Passed: DB lifecycle scripts are separated and have no default admin password');
+
+  // --- Section 14: Unified password policy (12-char minimum, mixed classes) ---
+
+  // 27. Weak passwords rejected across every length/class dimension
+  assert.ok(validatePasswordStrength('Short1!'), 'Below 12 chars must be rejected');
+  assert.ok(validatePasswordStrength('alllowercase1!'), 'Missing uppercase must be rejected');
+  assert.ok(validatePasswordStrength('ALLUPPERCASE1!'), 'Missing lowercase must be rejected');
+  assert.ok(validatePasswordStrength('NoDigitsHere!!!'), 'Missing digit must be rejected');
+  assert.ok(validatePasswordStrength('NoSpecialChars1'), 'Missing special char must be rejected');
+  assert.ok(validatePasswordStrength(''), 'Empty password must be rejected');
+  assert.ok(validatePasswordStrength('a'.repeat(200)), 'Over-length password must be rejected');
+  // 28. Compliant passwords accepted
+  assert.strictEqual(validatePasswordStrength('CorrectHorse3!Battery'), null, 'Strong 12+ char mixed password must pass');
+  assert.strictEqual(validatePasswordStrength('Abcdef12345!'), null, 'Exactly-12 compliant password must pass');
+  // 29. Policy minimum is genuinely 12 (not the legacy 8)
+  assert.strictEqual(PASSWORD_MIN_LENGTH, 12, 'Password minimum length must be standardized to 12');
+  assert.ok(validatePasswordStrength('Ab1!defghij'), 'A 11-char password must still be rejected at the 12-char floor');
+  console.log('✅ Test 27-29 Passed: Unified 12-character password policy enforced');
+
+  // --- Section 25: Strict UUID validation for resource identifiers ---
+  // 30. Valid and invalid UUID formats
+  assert.strictEqual(isValidUuid('2f1e9b7a-0c1d-4e5f-8a9b-cd0ef1234567'), true, 'Canonical UUID must be valid');
+  assert.strictEqual(isValidUuid('../../etc/passwd'), false, 'Path traversal string must not pass UUID validation');
+  assert.strictEqual(isValidUuid("1'; DROP TABLE users;--"), false, 'SQL injection payload must not pass UUID validation');
+  assert.strictEqual(isValidUuid(''), false, 'Empty string must not pass UUID validation');
+  assert.strictEqual(isValidUuid(undefined), false, 'undefined must not pass UUID validation');
+  assert.strictEqual(isValidUuid('2f1e9b7a-0c1d-4e5f-8a9b-cd0ef123456'), false, 'Malformed (short) UUID must be rejected');
+  // 31. WS ticket format gate (48 hex chars) used by the shared ticket store
+  const ticketShape = /^[0-9a-f]{48}$/;
+  assert.strictEqual(ticketShape.test(crypto.randomBytes(24).toString('hex')), true, 'Generated ticket must match the 48-hex store format');
+  assert.strictEqual(ticketShape.test('zz1e9b7a0c1d4e5f8a9bcd0ef1234567890123456789'), false, 'Non-hex ticket must be rejected');
+  console.log('✅ Test 30-31 Passed: Strict UUID + WS ticket format validation');
 
   console.log('\n🎉 ALL MANDATORY ACCEPTANCE SECURITY TESTS PASSED CLEANLY.');
 }

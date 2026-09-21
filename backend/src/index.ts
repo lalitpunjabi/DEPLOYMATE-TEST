@@ -85,8 +85,8 @@ app.use(express.json({
 const wss = new WebSocketServer({ noServer: true });
 const terminalWss = new WebSocketServer({ noServer: true });
 
-// Store active WebSocket connections keyed by run ID
-export const activeLogStreams = new Map<string, Set<WebSocket>>();
+// Store active WebSocket log streams via the shared log-stream bus (multi-replica fan-out)
+import { activeLogStreams, attachClient, detachClient, closeLogStreamBus } from './services/logStreamBus';
 
 wss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
   const urlParams = new URL(request.url || '', `http://${request.headers.host}`);
@@ -97,23 +97,14 @@ wss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
     return;
   }
 
-  if (!activeLogStreams.has(runId)) {
-    activeLogStreams.set(runId, new Set());
-  }
-  activeLogStreams.get(runId)!.add(ws);
+  attachClient(runId, ws);
 
   ws.on('close', () => {
-    const streams = activeLogStreams.get(runId);
-    if (streams) {
-      streams.delete(ws);
-      if (streams.size === 0) {
-        activeLogStreams.delete(runId);
-      }
-    }
+    detachClient(runId, ws);
   });
 });
 
-// Interactive Pod Terminal WebSocket Handler
+// Interactive Pod Terminal WebSocket Handler (SIMULATED shell — no live cluster exec is performed)
 terminalWss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
   const urlParams = new URL(request.url || '', `http://${request.headers.host}`);
   const podName = urlParams.searchParams.get('pod') || 'deploymate-api-pod';
@@ -121,7 +112,8 @@ terminalWss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
 
   ws.send(
     JSON.stringify({
-      output: `\x1b[32mConnected to Pod Shell: ${podName} (${namespace})\x1b[0m\r\nType 'help' or commands (ls, ps, top, env, exit)...\r\n$ `,
+      execution_mode: 'SIMULATED',
+      output: `\x1b[33m[SIMULATED SHELL — not connected to a real cluster]\x1b[0m\r\n\x1b[32mSimulated Pod Shell: ${podName} (${namespace})\x1b[0m\r\nType 'help' or commands (ls, ps, top, env, exit)...\r\n$ `,
     })
   );
 
@@ -154,7 +146,8 @@ terminalWss.on('connection', (ws: WebSocket, request: http.IncomingMessage) => {
   });
 });
 
-import { wsTickets } from './controllers/authController';
+import { consumeWsTicket } from './services/wsTicketStore';
+import { isValidUuid } from './utils/securityUtils';
 
 // Authenticated Upgrade HTTP connection to WebSocket with role & resource validation
 server.on('upgrade', async (request, socket, head) => {
@@ -170,6 +163,8 @@ server.on('upgrade', async (request, socket, head) => {
 
   // 1. Authenticate Single-Use Ticket (JWT query parameters ?token= are rejected for security)
   let userId: string | null = null;
+  let ticketProjectId: string | null = null;
+  let ticketAllowsTerminal = false;
 
   if (token) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nJWT query-string WebSocket authentication rejected. Use ws-ticket.');
@@ -177,19 +172,21 @@ server.on('upgrade', async (request, socket, head) => {
     return;
   }
 
-  if (ticket) {
-    const ticketData = wsTickets.get(ticket);
-    if (ticketData && ticketData.expiresAt > Date.now()) {
+  try {
+    // Shared store: a ticket created on any backend replica is consumable here.
+    // Consumption is atomic + single-use with 60-second expiry (replay protected).
+    const ticketData = await consumeWsTicket(ticket);
+    if (ticketData) {
       userId = ticketData.userId;
-      wsTickets.delete(ticket); // Single-use consumption
+      ticketProjectId = ticketData.projectId;
+      ticketAllowsTerminal = ticketData.allowsTerminal;
     } else {
-      if (ticketData) wsTickets.delete(ticket);
-      socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid or expired ticket');
+      socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nInvalid, expired, consumed or malformed ticket');
       socket.destroy();
       return;
     }
-  } else {
-    socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\n\r\nAuthentication ticket required');
+  } catch {
+    socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nTicket store unavailable');
     socket.destroy();
     return;
   }
@@ -211,8 +208,16 @@ server.on('upgrade', async (request, socket, head) => {
 
     const userRole = userRes.rows[0].role;
 
-    // 2. Authorize Terminal Shell Access (Requires Super Admin or DevOps Engineer + Project Access)
+    // 2. Authorize Terminal Shell Access (Requires terminal-scoped ticket + eligible role + project access)
     if (pathname === '/ws/terminal') {
+      if (!ticketAllowsTerminal) {
+        socket.write(
+          'HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nTicket is not authorized for terminal access. Request a ticket with terminal=true.'
+        );
+        socket.destroy();
+        return;
+      }
+
       if (userRole !== 'Super Admin' && userRole !== 'DevOps Engineer') {
         socket.write(
           'HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nTerminal shell access requires Super Admin or DevOps Engineer role'
@@ -237,6 +242,13 @@ server.on('upgrade', async (request, socket, head) => {
         }
 
         const targetProjId = depRes.rows[0].project_id;
+        // Ticket project scope (when present) must match the resolved namespace project.
+        if (ticketProjectId && ticketProjectId !== targetProjId) {
+          socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nTicket project scope does not match target namespace');
+          socket.destroy();
+          return;
+        }
+
         const projRes = await query('SELECT owner_id FROM projects WHERE id = $1', [targetProjId]);
         if (projRes.rowCount === 0) {
           socket.write('HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nTarget project not found');
@@ -268,13 +280,13 @@ server.on('upgrade', async (request, socket, head) => {
     // 3. Authorize Log Streaming & Verify Resource Project Access
     if (pathname === '/ws/logs') {
       const runId = urlObj.searchParams.get('runId');
-      if (userRole !== 'Super Admin') {
-        if (!runId) {
-          socket.write('HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nMissing runId parameter');
-          socket.destroy();
-          return;
-        }
+      if (!runId || !isValidUuid(runId)) {
+        socket.write('HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nMissing or invalid runId parameter');
+        socket.destroy();
+        return;
+      }
 
+      if (userRole !== 'Super Admin') {
         const runRes = await query(
           `SELECT p.project_id, p.owner_id 
            FROM pipeline_runs pr 
@@ -291,6 +303,13 @@ server.on('upgrade', async (request, socket, head) => {
         }
 
         const { project_id, owner_id } = runRes.rows[0];
+        // Ticket project scope (when present) must match the run's project.
+        if (ticketProjectId && ticketProjectId !== project_id) {
+          socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nTicket project scope does not match pipeline run project');
+          socket.destroy();
+          return;
+        }
+
         if (owner_id !== userId) {
           const pmRes = await query('SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2', [
             project_id,
@@ -324,7 +343,7 @@ server.on('upgrade', async (request, socket, head) => {
 // Security Rate Limiting
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: 1000, // Generous by-IP budget: normal UI polling + ws-ticket refresh must not be throttled
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many requests from this IP address, please try again later.' },
@@ -346,12 +365,21 @@ const aiLimiter = rateLimit({
   message: { message: 'Too many AI requests. Please try again after 15 minutes.' },
 });
 
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60, // GitHub deliveries are bursty but never need >1/min from one source
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many webhook deliveries from this source.' },
+});
+
 app.use('/api/', globalLimiter);
 app.use('/api/v1/auth/login', authLimiter);
 app.use('/api/v1/auth/register', authLimiter);
 app.use('/api/v1/auth/forgot-password', authLimiter);
 app.use('/api/v1/auth/reset-password', authLimiter);
 app.use('/api/v1/ai/', aiLimiter);
+app.use('/api/v1/webhooks/', webhookLimiter);
 
 // Root Welcome Endpoint
 app.get('/', (_req, res) => {
@@ -418,6 +446,26 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   sendSafeError(res, err, 'Internal Server Error', err.status || 500);
 });
 
+// Data retention sweeper: bounded growth of replay-protection & housekeeping tables.
+// - webhook_deliveries kept for 7 days (replay protection window, documented in SECURITY.md)
+// - expired ws_tickets and consumed/expired password_reset_tokens and revoked sessions swept
+const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // hourly
+
+async function sweepRetention(): Promise<void> {
+  try {
+    await query(`DELETE FROM webhook_deliveries WHERE created_at < NOW() - INTERVAL '7 days'`);
+    await query(`DELETE FROM ws_tickets WHERE expires_at < NOW() - INTERVAL '1 hour'`);
+    await query(`DELETE FROM password_reset_tokens WHERE expires_at < NOW() - INTERVAL '1 day' OR used_at < NOW() - INTERVAL '1 day'`);
+    await query(`DELETE FROM user_sessions WHERE expires_at < NOW() - INTERVAL '7 days'`);
+  } catch (err) {
+    console.error('[RETENTION] Retention sweep failed:', (err as Error).message);
+  }
+}
+
+const retentionTimer = setInterval(sweepRetention, RETENTION_SWEEP_INTERVAL_MS);
+retentionTimer.unref();
+sweepRetention().catch(() => undefined);
+
 // Process exception handlers & Graceful shutdown
 process.on('uncaughtException', (err) => {
   console.error('[DEPLOYMATE BACKEND] Uncaught Exception:', err);
@@ -438,6 +486,7 @@ function gracefulShutdown(signal: string) {
   // Close active WebSockets
   wss.clients.forEach(client => client.close(1001, 'Server shutting down'));
   terminalWss.clients.forEach(client => client.close(1001, 'Server shutting down'));
+  closeLogStreamBus();
 
   serverInstance.close(async () => {
     console.log('[DEPLOYMATE BACKEND] HTTP server closed. Closing database pool...');

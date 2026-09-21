@@ -38,6 +38,8 @@ interface LiveMetric {
   requestCount: number;
   errorRate: number;
   source: string;
+  execution_mode?: 'LIVE' | 'SIMULATED' | 'DEGRADED';
+  notice?: string;
 }
 
 export const Monitoring: React.FC = () => {
@@ -135,6 +137,25 @@ export const Monitoring: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-text">Cluster Telemetry Metrics</h1>
           <p className="text-sm text-muted">Real-time CPU, Memory, Traffic Rates, and Error logs telemetry.</p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span
+            className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border font-mono ${
+              live?.execution_mode === 'LIVE'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                : live?.execution_mode === 'DEGRADED'
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                : 'bg-slate-500/10 text-muted border-border'
+            }`}
+            title={live?.notice || `Telemetry source: ${live?.source || 'unknown'}`}
+          >
+            {live?.execution_mode === 'LIVE'
+              ? 'Prometheus Live'
+              : live?.execution_mode === 'DEGRADED'
+              ? 'Degraded (Simulated)'
+              : 'Simulated'}
+          </span>
         </div>
 
         <div className="flex items-center gap-3">

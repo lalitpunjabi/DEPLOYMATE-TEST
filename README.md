@@ -95,15 +95,15 @@ Git Commit → CI/CD Engine → Unit Tests → DevSecOps Gates (Trivy/Sonar) →
 | **Progressive Delivery** | `Implemented` | Interactive Canary traffic allocation (10% → 50% → 100%) and Blue-Green router swapping with active revision state persistence. |
 | **GitOps Reconciler** | `Implemented` | Desired-vs-Live spec comparison, drift diff visualization, and manual/automated reconciliation triggers (`execution_mode: "SIMULATED"`). |
 | **Terraform IaC Runner** | `Implemented` | HCL code generation via AI, dry-run plan logging, static security policy checks (blocking `0.0.0.0/0` SSH access), and state locking (`execution_mode: "SIMULATED"`). |
-| **Observability & SRE** | `Implemented` | SLI/SLO calculations (Availability %, Latency p95/p99, Error Budget, Burn Rate) with automated P1 incident ticketing on burn rate spikes (>14.2x). |
-| **AIOps & Co-Pilot** | `Implemented` | Gemini-powered structured JSON diagnosis with empirical evidence lists, confidence ratings (%), risk scores, markdown postmortems, and **GitHub Auto-Fix PR Creation**. |
-| **FinOps Cloud Optimizer** | `Implemented` | Real-time pod request vs usage analysis, monthly USD cost calculations, and actionable downsizing cost-saving recommendations. |
+| **Observability & SRE** | `Implemented` | SLI/SLO calculations (Availability %, Latency p95/p99, Error Budget, Burn Rate) with automated P1 incident ticketing on burn-rate spikes (>14.2x). Reported as `execution_mode: "SIMULATED"` unless a live Prometheus is configured. |
+| **AIOps & Co-Pilot** | `Implemented` | Gemini-powered structured JSON diagnosis with empirical evidence lists, confidence ratings (%), risk scores, markdown postmortems, and **GitHub Auto-Fix PR Creation**. Returns `execution_mode: "DEGRADED"` (HTTP 503) with no fabricated output when the AI engine is unavailable. |
+| **FinOps Cloud Optimizer** | `Implemented` | Pod request-vs-usage analysis, monthly USD cost calculations, and downsizing recommendations based on published benchmark rates and static usage profiles (`execution_mode: "SIMULATED"`). |
 | **OPA Policy-as-Code** | `Implemented` | Enterprise policy engine evaluating Kubernetes YAML & Terraform HCL against 6 compliance rules (`POL-001` to `POL-006`). |
 | **In-Browser Pod Terminal** | `Implemented` | Interactive WebSocket shell terminal (`/ws/terminal`) with short-lived ticket authorization for container command execution (`ls`, `ps`, `top`, `env`, `exit`). |
 | **GitHub Webhook Ingestion** | `Implemented` | Raw-body HMAC SHA256 validated webhook listener (`/api/v1/webhooks/github`) with persistent PostgreSQL replay protection (`X-GitHub-Delivery`). |
 | **`dmate` Developer CLI** | `Implemented` | Command-line developer tool (`cli/dmate.ts`) for checking platform status, triggering pipelines, and running terminal AI diagnostics. |
 | **Human-in-the-Loop Gate** | `Implemented` | Approval modal (`ApprovalModal.tsx`) requiring explicit operator confirmation before executing high-risk AI remediations or infrastructure mutations. |
-| **Resilience Lab (Chaos)** | `Implemented` | Targeted failure injections (`POD_KILL`, `CPU_STRESS`, `NETWORK_DELAY`) with safety limits (max 300s duration, namespace checks) and dynamic resilience scoring (`execution_mode: "SIMULATED"`). |
+| **Resilience Lab (Chaos)** | `Implemented` | Targeted failure injections (`POD_KILL`, `CPU_STRESS`, `NETWORK_DELAY`, `MEMORY_PRESSURE`) with safety limits (allowlist + max-duration cap, namespace/project checks) and dynamic resilience scoring (`execution_mode: "SIMULATED"`). |
 | **Platform Engineering** | `Implemented` | Multi-stage Dockerfiles, `docker-compose.yml`, production HTTPS stack (`docker-compose.prod.yml`), Kubernetes Helm chart (`helm/`), self-observability (`/health`, `/ready`, `/metrics`), and dogfood GitHub Actions CI. |
 
 ---

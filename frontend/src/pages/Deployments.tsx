@@ -302,7 +302,8 @@ export const Deployments: React.FC = () => {
     try {
       const ticketRes = await fetch('/api/v1/auth/ws-ticket', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ terminal: true })
       });
       if (!ticketRes.ok) {
         setTerminalLogs(prev => [...prev, 'Failed to obtain WebSocket ticket.']);

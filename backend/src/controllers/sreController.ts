@@ -1,10 +1,12 @@
 import { Response } from 'express';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
-import { sendSafeError } from '../utils/securityUtils';
+import { sendSafeError, isValidUuid } from '../utils/securityUtils';
 import { AuthenticatedRequest } from '../middleware/auth';
+import { aiService, isAiUnavailable } from '../services/aiService';
+import { insertAuditLog } from '../services/auditService';
 
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+const VALID_SEVERITIES = ['P1', 'P2', 'P3', 'P4'];
 
 export async function getSloHealth(_req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -21,7 +23,13 @@ export async function getSloHealth(_req: AuthenticatedRequest, res: Response): P
     }
 
     const sloRes = await query(`SELECT * FROM sre_slo_targets ORDER BY service_name, metric_type`);
-    res.status(200).json(sloRes.rows);
+    // Honest labeling: SLI values are stored demo seed figures, not measured from live metrics.
+    res.setHeader('X-Execution-Mode', 'SIMULATED');
+    res.status(200).json({
+      execution_mode: 'SIMULATED',
+      notice: 'SLO targets and SLI/burn-rate values are stored reference figures, not measurements from a live metrics pipeline.',
+      targets: sloRes.rows,
+    });
   } catch (error: any) {
     sendSafeError(res, error, 'Failed to retrieve SRE SLO status.', 500);
   }
@@ -29,6 +37,11 @@ export async function getSloHealth(_req: AuthenticatedRequest, res: Response): P
 
 export async function getIncidents(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { projectId } = req.query;
+
+  if (projectId && !isValidUuid(String(projectId))) {
+    res.status(400).json({ message: 'Invalid project ID format.' });
+    return;
+  }
 
   try {
     let incidentRes;
@@ -67,6 +80,26 @@ export async function createIncident(req: AuthenticatedRequest, res: Response): 
     return;
   }
 
+  if (!VALID_SEVERITIES.includes(severity)) {
+    res.status(400).json({ message: 'Invalid severity. Must be one of: P1, P2, P3, P4.' });
+    return;
+  }
+
+  if (String(title).length > 255 || String(title).trim().length === 0) {
+    res.status(400).json({ message: 'Title is required and must not exceed 255 characters.' });
+    return;
+  }
+
+  if (String(description).length > 10000) {
+    res.status(400).json({ message: 'Description must not exceed 10,000 characters.' });
+    return;
+  }
+
+  if (project_id && !isValidUuid(project_id)) {
+    res.status(400).json({ message: 'Invalid project ID format.' });
+    return;
+  }
+
   try {
     const insertRes = await query(
       `INSERT INTO sre_incidents (severity, title, description, status, project_id)
@@ -75,6 +108,17 @@ export async function createIncident(req: AuthenticatedRequest, res: Response): 
     );
 
     const incident = insertRes.rows[0];
+
+    // Project-scoped audit trail
+    await insertAuditLog({
+      userId: req.user?.id ?? null,
+      action: 'INCIDENT_CREATED',
+      resource: 'SRE_INCIDENT',
+      resourceId: incident.id,
+      projectId: incident.project_id,
+      details: { severity, title },
+      req,
+    });
 
     // Emit EventBus incident creation event
     await EventBus.emit({
@@ -85,9 +129,10 @@ export async function createIncident(req: AuthenticatedRequest, res: Response): 
       metadata: { incidentId: incident.id, severity, project_id },
     });
 
-    // If P1 severity, trigger AlertManager and Self-Healing
+    // If P1 severity, register a SIMULATED self-healing recommendation (hardening spec §11:
+    // the platform never executes or fakes cluster remediation commands)
     if (severity === 'P1') {
-      console.log(`[AlertManager] CRITICAL P1 incident registered! Scheduling self-healing actions.`);
+      console.log(`[AlertManager] CRITICAL P1 incident registered. Logging simulated self-healing recommendation.`);
 
       const podName = 'deploymate-api-5d7f8c9b-abc12';
       const namespace = 'default';
@@ -100,8 +145,8 @@ export async function createIncident(req: AuthenticatedRequest, res: Response): 
           podName,
           namespace,
           anomaly,
-          `kubectl delete pod ${podName} --namespace=${namespace} (Controlled Restart)`,
-          'SUCCESS',
+          `Recommended (SIMULATED): kubectl delete pod ${podName} -n ${namespace}`,
+          'SIMULATED',
           incident.id,
         ]
       );
@@ -109,6 +154,7 @@ export async function createIncident(req: AuthenticatedRequest, res: Response): 
 
     res.status(201).json({
       message: 'SRE incident ticket successfully opened.',
+      execution_mode: 'SIMULATED',
       incident,
     });
   } catch (error: any) {
@@ -144,32 +190,24 @@ Provide:
 3. Immediate Resolution Actions
 4. Long-term Preventative Measures`;
 
-    let postmortemMarkdown = '';
+    // Hardening spec §5/§13: no unlabeled fabricated postmortem fallback.
+    // If the AI engine is unavailable we answer 503 DEGRADED instead.
+    let aiResult: { response?: string; text?: string; execution_mode?: string };
     try {
-      const aiRes = await fetch(`${AI_SERVICE_URL}/api/v1/ai/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Internal-Token': process.env.AI_INTERNAL_TOKEN || 'deploymate-internal-ai-secret-token',
-        },
-        body: JSON.stringify({ message: prompt, history: [] }),
-      });
-      const data = (await aiRes.json()) as any;
-      postmortemMarkdown = data.response || data.text;
+      aiResult = await aiService.chat(prompt, []);
     } catch (err) {
-      console.warn('AI service unreachable, generating default SRE postmortem template.');
-      postmortemMarkdown = `# Incident Postmortem: ${incident.title}
-
-## 1. Executive Summary
-On ${incident.created_at ? incident.created_at.toISOString() : new Date().toISOString()}, the team detected a ${incident.severity} outage. The issue was fully mitigated.
-
-## 2. Root Cause Analysis
-The service encountered exhaustion of resources under simulated load spikes.
-
-## 3. Preventative Actions
-- Increase Kubernetes memory limits from 512Mi to 1Gi.
-- Set up Horizontal Pod Autoscaler policies.`;
+      if (isAiUnavailable(err)) {
+        res.status(503).json({
+          execution_mode: 'DEGRADED',
+          message: 'AI service temporarily unavailable; no postmortem was generated. Incident left OPEN.',
+        });
+        return;
+      }
+      throw err;
     }
+
+    const postmortemMarkdown = `<!-- execution_mode=${aiResult.execution_mode || 'SIMULATED'} -->\n\n` +
+      (aiResult.response || aiResult.text || '');
 
     const updateRes = await query(
       `UPDATE sre_incidents 
@@ -189,6 +227,7 @@ The service encountered exhaustion of resources under simulated load spikes.
 
     res.status(200).json({
       message: 'Incident postmortem compiled and ticket marked as RESOLVED.',
+      execution_mode: aiResult.execution_mode || 'SIMULATED',
       incident: updateRes.rows[0],
     });
   } catch (error: any) {
@@ -196,10 +235,46 @@ The service encountered exhaustion of resources under simulated load spikes.
   }
 }
 
-export async function getSelfHealingActions(_req: AuthenticatedRequest, res: Response): Promise<void> {
+export async function getSelfHealingActions(req: AuthenticatedRequest, res: Response): Promise<void> {
+  const { projectId } = req.query;
+
+  if (projectId && !isValidUuid(String(projectId))) {
+    res.status(400).json({ message: 'Invalid project ID format.' });
+    return;
+  }
+
   try {
-    const listRes = await query(`SELECT * FROM self_healing_actions ORDER BY created_at DESC`);
-    res.status(200).json(listRes.rows);
+    let listRes;
+    if (projectId) {
+      listRes = await query(
+        `SELECT sha.* FROM self_healing_actions sha
+         JOIN sre_incidents si ON sha.incident_id = si.id
+         WHERE si.project_id = $1
+         ORDER BY sha.created_at DESC`,
+        [projectId]
+      );
+    } else if (req.user?.role === 'Super Admin') {
+      listRes = await query(`SELECT * FROM self_healing_actions ORDER BY created_at DESC`);
+    } else {
+      // Tenant isolation: only actions linked to incidents in the caller's projects
+      listRes = await query(
+        `SELECT sha.* FROM self_healing_actions sha
+         JOIN sre_incidents si ON sha.incident_id = si.id
+         WHERE si.project_id IN (
+           SELECT id FROM projects WHERE owner_id = $1
+           UNION
+           SELECT project_id FROM project_members WHERE user_id = $1
+         )
+         ORDER BY sha.created_at DESC`,
+        [req.user?.id]
+      );
+    }
+    res.setHeader('X-Execution-Mode', 'SIMULATED');
+    res.status(200).json({
+      execution_mode: 'SIMULATED',
+      notice: 'Self-healing actions are simulated recommendations. No remediation commands were executed against any cluster.',
+      actions: listRes.rows,
+    });
   } catch (error: any) {
     sendSafeError(res, error, 'Failed to retrieve self-healing actions.', 500);
   }

@@ -33,13 +33,17 @@ ingress:
 
 env:
   nodeEnv: production
-  dbHost: postgres
+  # REQUIRED: your external PostgreSQL host. The chart intentionally does not
+  # deploy or silently assume an in-cluster 'postgres' service (hardening spec §19).
+  dbHost: ""
   dbPort: "5432"
   dbName: deploymate
   dbAppUser: deploymate_app
   aiMode: simulated
   frontendUrl: https://deploymate.example.com
   allowedOrigins: http://backend:5000
+  # Optional Prometheus URL for LIVE telemetry. Empty => honest SIMULATED mode.
+  prometheusUrl: ""
 
 secrets:
   # Leave empty and provide via --set or a sealed-secret / external secret manager.

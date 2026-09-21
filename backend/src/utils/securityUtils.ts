@@ -9,6 +9,47 @@ export function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+// ---------------------------------------------------------------------------
+// Unified production password policy (single source of truth).
+// Applied to: registration, password reset, password change, initial admin
+// bootstrap and any admin-created account. No endpoint may use a weaker rule.
+// ---------------------------------------------------------------------------
+export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MAX_LENGTH = 128;
+
+/**
+ * Returns an error message when the password violates policy, or null when valid.
+ * Policy: >= 12 characters, at least one lowercase letter, one uppercase letter,
+ * one digit and one non-alphanumeric character.
+ */
+export function validatePasswordStrength(password: unknown): string | null {
+  if (typeof password !== 'string' || password.length === 0) {
+    return 'Password is required.';
+  }
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    return `Password must not exceed ${PASSWORD_MAX_LENGTH} characters.`;
+  }
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters long.`;
+  }
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) {
+    return 'Password must contain both lowercase and uppercase letters.';
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'Password must contain at least one number.';
+  }
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    return 'Password must contain at least one special character.';
+  }
+  return null;
+}
+
+// Strict UUID validation for client-supplied resource identifiers
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isValidUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_PATTERN.test(value);
+}
+
 // Path traversal prevention helper
 export function sanitizeFilePath(baseDir: string, relativePath: string): string {
   const absoluteBase = path.resolve(baseDir);

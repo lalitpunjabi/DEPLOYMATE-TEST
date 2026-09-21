@@ -4,11 +4,22 @@ import { k8sService } from '../services/k8sService';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
 import { sendSafeError } from '../utils/securityUtils';
+import { insertAuditLog } from '../services/auditService';
+
+/** Resolve the owning project of a cluster namespace via tracked deployments (null when unmapped). */
+async function resolveNamespaceProjectId(namespace: string): Promise<string | null> {
+  try {
+    const nsRes = await query('SELECT DISTINCT project_id FROM deployments WHERE namespace = $1 AND project_id IS NOT NULL', [namespace]);
+    return nsRes.rowCount === 1 ? nsRes.rows[0].project_id : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function getNamespaces(_req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const namespaces = await k8sService.getNamespaces();
-    res.status(200).json({ namespaces, execution_mode: k8sService.getMode() });
+    const result = await k8sService.getNamespaces();
+    res.status(200).json({ namespaces: result.data, execution_mode: result.execution_mode, ...(result.notice ? { notice: result.notice } : {}) });
   } catch (error: any) {
     sendSafeError(res, error, 'Failed to retrieve namespaces.', 500);
   }
@@ -17,8 +28,8 @@ export async function getNamespaces(_req: AuthenticatedRequest, res: Response): 
 export async function getPods(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { namespace } = req.params;
   try {
-    const pods = await k8sService.getPods(namespace || 'default');
-    res.status(200).json({ pods, execution_mode: k8sService.getMode() });
+    const result = await k8sService.getPods(namespace || 'default');
+    res.status(200).json({ pods: result.data, execution_mode: result.execution_mode, ...(result.notice ? { notice: result.notice } : {}) });
   } catch (error: any) {
     sendSafeError(res, error, 'Failed to retrieve pods.', 500);
   }
@@ -27,8 +38,8 @@ export async function getPods(req: AuthenticatedRequest, res: Response): Promise
 export async function getDeployments(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { namespace } = req.params;
   try {
-    const deployments = await k8sService.getDeployments(namespace || 'default');
-    res.status(200).json({ deployments, execution_mode: k8sService.getMode() });
+    const result = await k8sService.getDeployments(namespace || 'default');
+    res.status(200).json({ deployments: result.data, execution_mode: result.execution_mode, ...(result.notice ? { notice: result.notice } : {}) });
   } catch (error: any) {
     sendSafeError(res, error, 'Failed to retrieve deployments.', 500);
   }
@@ -37,8 +48,8 @@ export async function getDeployments(req: AuthenticatedRequest, res: Response): 
 export async function getServices(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { namespace } = req.params;
   try {
-    const services = await k8sService.getServices(namespace || 'default');
-    res.status(200).json({ services, execution_mode: k8sService.getMode() });
+    const result = await k8sService.getServices(namespace || 'default');
+    res.status(200).json({ services: result.data, execution_mode: result.execution_mode, ...(result.notice ? { notice: result.notice } : {}) });
   } catch (error: any) {
     sendSafeError(res, error, 'Failed to retrieve services.', 500);
   }
@@ -58,10 +69,10 @@ export async function rollbackDeployment(req: AuthenticatedRequest, res: Respons
   }
 
   try {
-    const success = await k8sService.rollback(namespace, name);
+    const result = await k8sService.rollback(namespace, name);
 
-    if (!success) {
-      res.status(500).json({ message: 'Rollback operation failed.' });
+    if (!result.success) {
+      res.status(500).json({ message: 'Rollback operation failed.', execution_mode: result.execution_mode, notice: result.notice });
       return;
     }
 
@@ -79,12 +90,16 @@ export async function rollbackDeployment(req: AuthenticatedRequest, res: Respons
       ]
     );
 
-    // Audit logging
-    await query(
-      `INSERT INTO audit_logs (user_id, action, resource, details)
-       VALUES ($1, $2, $3, $4)`,
-      [req.user.id, 'ROLLBACK', 'DEPLOYMENT', JSON.stringify({ deploymentName: name, namespace })]
-    );
+    // Audit logging (project-scoped when the namespace maps to a single project)
+    const projectId = await resolveNamespaceProjectId(namespace);
+    await insertAuditLog({
+      userId: req.user.id,
+      action: 'ROLLBACK',
+      resource: 'DEPLOYMENT',
+      projectId,
+      details: { deploymentName: name, namespace, execution_mode: result.execution_mode },
+      req,
+    });
 
     // Emit EventBus event
     await EventBus.emit({
@@ -96,7 +111,11 @@ export async function rollbackDeployment(req: AuthenticatedRequest, res: Respons
       metadata: { user: req.user.email },
     });
 
-    res.status(200).json({ message: `Deployment ${name} rolled back successfully.`, execution_mode: k8sService.getMode() });
+    res.status(200).json({
+      message: `Deployment ${name} rolled back ${result.execution_mode === 'LIVE' ? 'successfully.' : '(simulated — no live cluster is attached).'}`,
+      execution_mode: result.execution_mode,
+      ...(result.notice ? { notice: result.notice } : {}),
+    });
   } catch (error: any) {
     sendSafeError(res, error, 'Failed to execute rollback.', 500);
   }
@@ -123,11 +142,15 @@ export async function canarySplit(req: AuthenticatedRequest, res: Response): Pro
     );
 
     if (req.user) {
-      await query(
-        `INSERT INTO audit_logs (user_id, action, resource, details)
-         VALUES ($1, $2, $3, $4)`,
-        [req.user.id, 'CANARY_SPLIT', 'DEPLOYMENT', JSON.stringify({ name, namespace, weight })]
-      );
+      const projectId = await resolveNamespaceProjectId(namespace);
+      await insertAuditLog({
+        userId: req.user.id,
+        action: 'CANARY_SPLIT',
+        resource: 'DEPLOYMENT',
+        projectId,
+        details: { name, namespace, weight, execution_mode: 'SIMULATED' },
+        req,
+      });
     }
 
     await EventBus.emit({
@@ -140,8 +163,10 @@ export async function canarySplit(req: AuthenticatedRequest, res: Response): Pro
     });
 
     res.status(200).json({
-      message: `Canary traffic split of ${weight}% successfully applied to ${name}.`,
-      execution_mode: k8sService.getMode(),
+      message: `Canary traffic split of ${weight}% recorded for ${name}.`,
+      // DB bookkeeping only — no service mesh/ingress traffic was actually rerouted
+      execution_mode: 'SIMULATED',
+      notice: 'Canary weight stored in platform records only. No live traffic was rerouted.',
       details: {
         deployment: name,
         namespace,
@@ -186,11 +211,15 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
     );
 
     if (req.user) {
-      await query(
-        `INSERT INTO audit_logs (user_id, action, resource, details)
-         VALUES ($1, $2, $3, $4)`,
-        [req.user.id, 'BLUE_GREEN_SWAP', 'SERVICE', JSON.stringify({ serviceName, namespace, activeColor })]
-      );
+      const projectId = await resolveNamespaceProjectId(namespace);
+      await insertAuditLog({
+        userId: req.user.id,
+        action: 'BLUE_GREEN_SWAP',
+        resource: 'SERVICE',
+        projectId,
+        details: { serviceName, namespace, activeColor, execution_mode: 'SIMULATED' },
+        req,
+      });
     }
 
     await EventBus.emit({
@@ -203,8 +232,10 @@ export async function blueGreenSwap(req: AuthenticatedRequest, res: Response): P
     });
 
     res.status(200).json({
-      message: `Blue-Green active backend successfully swapped to ${activeColor.toUpperCase()}.`,
-      execution_mode: k8sService.getMode(),
+      message: `Blue-Green active backend recorded as ${activeColor.toUpperCase()}.`,
+      // DB bookkeeping only — no live service router was modified
+      execution_mode: 'SIMULATED',
+      notice: 'Blue-Green swap stored in platform records only. No live router was modified.',
       details: {
         service: serviceName,
         namespace,

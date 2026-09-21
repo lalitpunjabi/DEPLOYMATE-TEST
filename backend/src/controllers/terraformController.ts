@@ -2,7 +2,8 @@ import { Response } from 'express';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { sendSafeError } from '../utils/securityUtils';
+import { sendSafeError, isValidUuid } from '../utils/securityUtils';
+import { insertAuditLog } from '../services/auditService';
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
@@ -21,13 +22,17 @@ export async function generateTerraformCode(req: AuthenticatedRequest, res: Resp
       body: JSON.stringify({ prompt })
     });
 
-    const data = await aiRes.json();
-    res.status(200).json(typeof data === 'object' && data !== null ? { ...data, execution_mode: 'SIMULATED' } : { execution_mode: 'SIMULATED', data });
+    const data = (await aiRes.json()) as { engine?: string } | null;
+    // Propagate the AI module's honest engine label (LIVE when Gemini really ran, SIMULATED otherwise)
+    const engine = data && (data.engine === 'LIVE' || data.engine === 'SIMULATED') ? data.engine : 'SIMULATED';
+    res.status(200).json(typeof data === 'object' && data !== null ? { ...data, execution_mode: engine } : { execution_mode: engine, data });
   } catch (error: any) {
-    console.warn('AI Service unreachable, returning fallback simulated Terraform configuration.', error);
-    res.status(200).json({
-      execution_mode: 'SIMULATED',
-      configuration_code: `# Secure Cloud Provisioning Config (Simulated)
+    // Honest degraded mode: AI generator unreachable — never pass unlabeled mock output off as generated.
+    console.warn('AI Service unreachable, returning DEGRADED fallback Terraform sample.', error);
+    res.status(503).json({
+      execution_mode: 'DEGRADED',
+      message: 'AI Terraform generator is temporarily unavailable. The sample below is a static reference template, not AI-generated output.',
+      configuration_code: `# Static reference sample (DEGRADED - AI generator unavailable, not AI-generated)
 provider "aws" {
   region = "us-east-1"
 }
@@ -52,6 +57,16 @@ export async function planTerraform(req: AuthenticatedRequest, res: Response): P
 
   if (!project_id || !stack_name || !configuration_code) {
     res.status(400).json({ message: 'Project ID, Stack Name, and HCL code are required.' });
+    return;
+  }
+
+  if (!isValidUuid(project_id)) {
+    res.status(400).json({ message: 'Invalid project ID format.' });
+    return;
+  }
+
+  if (String(stack_name).length > 128 || String(stack_name).length < 2) {
+    res.status(400).json({ message: 'Stack name must be between 2 and 128 characters.' });
     return;
   }
 
@@ -121,6 +136,11 @@ export async function applyTerraform(req: AuthenticatedRequest, res: Response): 
     return;
   }
 
+  if (!isValidUuid(id)) {
+    res.status(400).json({ message: 'Invalid state record ID format.' });
+    return;
+  }
+
   try {
     const checkRes = await query(`SELECT * FROM terraform_states WHERE id = $1`, [id]);
     if (checkRes.rowCount === 0) {
@@ -153,18 +173,17 @@ export async function applyTerraform(req: AuthenticatedRequest, res: Response): 
       ]
     );
 
-    // Save audit log using authenticated user ID
+    // Save audit log using authenticated user ID (project-scoped for tenant isolation)
     if (req.user?.id) {
-      await query(
-        `INSERT INTO audit_logs (user_id, action, resource, details)
-         VALUES ($1, $2, $3, $4)`,
-        [
-          req.user.id,
-          'TERRAFORM_APPLY',
-          'INFRASTRUCTURE',
-          JSON.stringify({ stack_name: state.stack_name, state_id: id, execution_mode: 'SIMULATED' })
-        ]
-      );
+      await insertAuditLog({
+        userId: req.user.id,
+        action: 'TERRAFORM_APPLY',
+        resource: 'INFRASTRUCTURE',
+        resourceId: state.id,
+        projectId: state.project_id,
+        details: { stack_name: state.stack_name, state_id: id, execution_mode: 'SIMULATED' },
+        req,
+      });
     }
 
     await EventBus.emit({
@@ -190,6 +209,11 @@ export async function getTerraformStates(req: AuthenticatedRequest, res: Respons
 
   if (!projectId) {
     res.status(400).json({ message: 'Project ID is required.' });
+    return;
+  }
+
+  if (!isValidUuid(String(projectId))) {
+    res.status(400).json({ message: 'Invalid project ID format.' });
     return;
   }
 

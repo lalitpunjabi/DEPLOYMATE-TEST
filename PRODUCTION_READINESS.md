@@ -1,164 +1,229 @@
-# DEPLOYMATE Production Readiness & Audit Report
+# DEPLOYMATE — Production Readiness & Hardening Audit Report
 
-### Executive Summary
-
-This document certifies that the **DEPLOYMATE** Cloud Operations & DevSecOps Control Plane has undergone full production readiness hardening, security verification, and empirical live production stack testing against `docker-compose.prod.yml`.
-
-All static compilation checks, dependency security audits, automated security regression tests, and live container stack operational tests have completed successfully with **zero errors**.
-
----
-
-## 1. Security Control & Production Matrix
-
-| Domain / Control | Requirement | Implementation Status | Empirical Verification Evidence |
-| :--- | :--- | :---: | :--- |
-| **1. TLS Documentation** | Document host paths `./certs/fullchain.pem` & `./certs/privkey.pem` and host-to-container mount `./certs:/etc/nginx/certs:ro`. | `IMPLEMENTED & VERIFIED` | `DEPLOYMENT.md` updated matching `docker-compose.prod.yml` and `frontend/nginx.conf`. Verified host mount and self-signed cert generation script (`scripts/generate_certs.sh`). |
-| **2. Production Compose Stack** | Launch real production stack via `docker-compose.prod.yml`. All containers healthy. Only ports 80/443 exposed. | `IMPLEMENTED & VERIFIED` | `docker compose -f docker-compose.prod.yml up -d` executed. `postgres` (healthy), `backend` (healthy), `ai-module` (healthy), `frontend` (running). `docker ps` verified ports 80 & 443 bound to host, internal ports 5000, 8000, 5432 isolated. |
-| **3. Real HTTPS Redirect & Endpoints** | HTTP port 80 redirects to HTTPS 443. Live HTTPS health/readiness endpoints respond cleanly with security headers. | `IMPLEMENTED & VERIFIED` | `curl -I http://localhost/` returned `HTTP/1.1 301 Moved Permanently` to `https://localhost/`. `curl -k -i https://localhost/health` & `/ready` returned `HTTP/1.1 200 OK` with HSTS, CSP, X-Frame-Options, X-Content-Type-Options headers. |
-| **4. Real Authentication & Session Revocation** | Live Super Admin login, JWT issuance, authenticated API call, logout, and session revocation. | `IMPLEMENTED & VERIFIED` | `POST https://localhost/api/v1/auth/login` returned 200 OK with valid JWT. `GET https://localhost/api/v1/projects` returned 200 OK. `POST https://localhost/api/v1/auth/logout` invalidated session. Subsequent token call failed with `401 Unauthorized` ("Session has been revoked or logged out."). |
-| **5. Real WebSocket Ticket Authorization** | Single-use tickets for `/ws/logs` and `/ws/terminal`. Ticket reuse rejected. Query-string JWT rejected. | `IMPLEMENTED & VERIFIED` | `POST /api/v1/auth/ws-ticket` issued 60s ticket. Upgrade over `/ws/logs?ticket=...` succeeded (`101 Switching Protocols UPGRADED`). Reusing ticket returned `401 Unauthorized` ("Invalid or expired ticket"). Query-string `?token=...` returned `401 Unauthorized` ("JWT query-string WebSocket authentication rejected."). |
-| **6. Real Multi-Tenant Isolation** | User A cannot access User B resources. Child resource IDs enforce project ownership. | `IMPLEMENTED & VERIFIED` | Live registration of User A & User B and project creation tested. `GET /api/v1/projects/:id` for cross-tenant requests returned `403 Forbidden` ("Forbidden: Unauthorized project context"). |
-| **7. Honest AI Production Mode & Security** | Honest labeling (`SIMULATED` vs `LIVE`). Reject unauthenticated requests without `X-Internal-Token`. | `IMPLEMENTED & VERIFIED` | `GET http://ai-module:8000/health` returned `{"status":"HEALTHY","engine":"SIMULATED","ai_mode":"simulated"}`. Request to `/api/v1/ai/log-analysis` without `X-Internal-Token` returned `401/403 Forbidden`. Request with valid `X-Internal-Token` returned `200 OK`. |
-| **8. DB Privilege Separation & Initialization** | Application runtime uses restricted role (`DB_APP_USER`). `db:init`, `db:migrate`, `db:seed` decoupled. | `IMPLEMENTED & VERIFIED` | Executed `docker exec deploymate-backend-prod npm run db:init`, `db:migrate`, `db:seed` inside container. Runtime database connection pool verified using `deploymate_app` non-superuser role. `db:init` superuser credentials isolated from runtime environment. |
-| **9. Nginx Configuration Validation** | Nginx reverse proxy syntax valid. SPA fallback, ACME path, security headers, proxy routes verified. | `IMPLEMENTED & VERIFIED` | `docker exec deploymate-frontend-prod nginx -t` returned `syntax is ok` and `test is successful`. |
-| **10. Documentation Consistency** | Remove hardcoded admin credentials and old security claims across documentation. | `IMPLEMENTED & VERIFIED` | `README.md`, `DEPLOYMENT.md`, `.env.example`, `.env.production.example`, `helm/README.md` reviewed and updated. Legacy default credentials (`admin@deploymate.com` / `admin123`) removed. |
+> Verification legend used throughout this document:
+> **STATIC VERIFIED** — confirmed by compilation / unit tests / config parsing, no running services.
+> **LIVE VERIFIED** — confirmed by executing commands against a genuinely running `docker-compose.prod.yml` stack (Postgres, backend, AI module, Nginx edge).
+> **SIMULATED** — feature intentionally runs in a labelled non-live mode (`execution_mode: "SIMULATED"`).
+> **NOT VERIFIED** — code path exists and is labelled honestly, but was **not** exercised against a real external system in this environment.
+>
+> This report does **not** claim unconditional readiness. See §24 for the final, scoped verdict.
 
 ---
 
-## 2. Static Verification Audit Results
+## 1. Executive Summary
+
+DEPLOYMATE is a single-lineage DevSecOps / Cloud-Operations control plane (there is exactly one architecture — no `v1`/`v2`/fork variants). This hardening pass focused on: multi-tenant authorization, audit-log isolation, genuinely shared multi-replica WebSocket state, honest execution-mode labelling, credential hygiene, and deployable infrastructure (Docker/Helm/CI).
+
+Mandatory **security** gates (authorization, tenant isolation, WebSocket security, webhook HMAC + replay protection, password policy, secret validation, infra config) are **implemented and verified** — statically and, for the API/WS/Webhook/DB surface, live against a real container stack.
+
+Optional **integration** gates that require external systems (a live Kubernetes API server, Prometheus, Google Gemini, Trivy/SonarQube/GitHub) are present, fail closed, and label themselves honestly, but remain **NOT VERIFIED** end-to-end in this environment. The final verdict in §24 reflects that distinction rather than overstating coverage.
+
+---
+
+## 2. Architecture
+
+| Layer | Technology | Notes |
+| :--- | :--- | :--- |
+| Frontend edge | Nginx (React 19 + Vite static build) | Only public listener: 80 → 301 → 443. Proxies `/api/v1/`, `/ws/`, `/health`, `/ready`. |
+| API / pipeline engine | Node.js 20 + Express + TypeScript | Stateless app; all shared state lives in Postgres. |
+| Realtime | `ws` (WebSocket) over `/ws/logs`, `/ws/terminal` | Ticket-authenticated; log fan-out via Postgres `LISTEN/NOTIFY`. |
+| AI microservice | Python FastAPI (Gemini optional) | Enforces `X-Internal-Token`; labels `engine: LIVE|SIMULATED`. |
+| Database | PostgreSQL 16 | Single source of truth for sessions, tickets, audit, pipeline state. |
+| Orchestration | Docker Compose (prod) + Helm chart | Two supported deploy targets. |
+
+**Shared-state decision (hardening spec §3):** The mandatory requirement was that WebSocket single-use tickets be shared across replicas. Redis is one valid option; this project deliberately uses **PostgreSQL as the shared store** (`ws_tickets` table consumed atomically with `DELETE ... RETURNING`, plus `pg_notify` for log broadcast) because Postgres is already a hard dependency and the ticket volume is tiny. This avoids adding/chunk-securing a second stateful service. The trade-off (one extra DB round-trip per WS connect) is negligible for this workload.
+
+---
+
+## 3. Security Controls (summary matrix)
+
+| Control | Status | Evidence |
+| :--- | :--- | :--- |
+| Helmet + hardened HTTP headers | LIVE VERIFIED | HTTPS responses carry HSTS, CSP, X-Frame-Options SAMEORIGIN, X-Content-Type-Options nosniff, Referrer-Policy, Permissions-Policy. |
+| Rate limiting | STATIC VERIFIED (partial) | `globalLimiter` (1000/15m) + dedicated `auth`/`ai`/`webhook` limiters. **Per-process** (see §23). |
+| Input validation / UUID gating | STATIC + LIVE VERIFIED | `isValidUuid` on every resource id; 31/31 security tests + live 400/401/403 paths. |
+| Error sanitization | STATIC VERIFIED | `sendSafeError` — no stack traces to clients. |
+| No fabricated data | STATIC VERIFIED | Repo-wide grep: no fabricated CVE ids / mock-fallback strings; unsafe paths return `NOT_EXECUTED`/`DEGRADED`. |
+| Secrets never defaulted | LIVE VERIFIED | Production startup aborts on missing/insecure secrets (security test 24); Helm `required()` fails render without secrets. |
+
+---
+
+## 4. Authentication & Session Security
+
+- JWT access tokens with **server-side session records** (`user_sessions`, token hashed). Logout revokes the session; a revoked token is rejected.
+- **LIVE VERIFIED:** login returns a token; after `/auth/logout`, the same token yields `401` ("Session has been revoked or logged out."). (Live test 3 & 4.)
+- Self-registration always assigns the least-privilege `Developer` role — privilege escalation through the public API is impossible (**LIVE VERIFIED**, live test 5).
+- RBAC permission category keys were corrected to match the runtime checks (see §5) so documented roles are actually enforced.
+
+---
+
+## 5. RBAC
+
+Roles seeded from `backend/src/config/rbacRoles.ts`: **Super Admin**, **DevOps Engineer**, **Developer**, **Viewer**.
+
+A previously latent defect is fixed here: routes authorize against **plural** categories (`projects`, `pipelines`, `deployments`) and the verb `run`, while the seed used **singular** keys (`project`, `pipeline`, `deployment`) and `execute`. That mismatch made every non-admin grant silently fail closed (roles other than Super Admin could not use most features). The seed keys/verbs are now aligned to the runtime contract; **capability levels were preserved** (Developer stays read-mostly, DevOps gains operational `create`/`run`, project deletion stays admin-only).
+
+- **LIVE VERIFIED:** after Super Admin promotes two users to `DevOps Engineer`, each can create its own project; a `Developer` cannot.
+- `security.test.ts` (31 tests) validates role-name and owner/member authorization logic — unaffected by the key rename because tests key off role names and `owner_id`/members.
+
+---
+
+## 6. Multi-Tenant Isolation
+
+`requireProjectAccess` resolves the owning project from the **database record** of the target resource (state / pipeline / run / deployment / incident / chaos / gitops / scan / namespace) before any user-supplied id, defeating parameter pollution; it then checks `owner_id` OR `project_members`, with Super Admin as the only cross-tenant override. Responses avoid existence leakage (403/404).
+
+Audit isolation (`auditService.queryAuditLogs`) implements three visibility classes: project-scoped (owner/members + Super Admin), personal (`user_id`, project NULL), and global (both NULL → Super Admin only). All write-controllers route audit through `insertAuditLog` with the resolved `project_id`.
+
+- **LIVE VERIFIED:** User A is denied (`403/404`) on User B's project-scoped read while succeeding on its own project (`200`); A's project listing excludes B's project (live tests 6 & 6b).
+- **STATIC VERIFIED:** security tests 1–11 (cross-tenant projects, pipelines, runs, deployments, terraform states, gitops, chaos, incidents, logs, WS logs/terminal).
+
+---
+
+## 7. WebSocket Security
+
+- Authentication uses **single-use, 60-second tickets** (`POST /api/v1/auth/ws-ticket`), stored **only as SHA-256 hashes** in the shared `ws_tickets` table and consumed atomically (`DELETE ... RETURNING`) so any replica can validate a ticket minted by any other replica.
+- `?token=<JWT>` query-string authentication is rejected outright.
+- `/ws/terminal` requires a ticket explicitly flagged `terminal:true`, held only by `Super Admin`/`DevOps Engineer`, plus namespace→project scope match.
+- **LIVE VERIFIED:** real `ws` upgrade succeeds with a valid ticket (`101`); replaying the consumed ticket → `401`; JWT query auth → `401`; malformed ticket → `401` (live tests 8–11).
+- **NOT VERIFIED:** true horizontal multi-replica handoff (ticket created by replica A consumed by replica B) — the store is Postgres-backed and correct by design, but a 2-replica race test was not run here (see §23).
+
+---
+
+## 8. Webhook Security
+
+- Raw-body **HMAC-SHA256** verification (byte-exact via `express.json({ verify })`), signature + delivery-id presence checks, and **Postgres replay protection** (`webhook_deliveries`).
+- Repository→project mapping uses **exact** matching; ambiguous mapping returns `400` and triggers no run (no fuzzy `ILIKE`).
+- Delivery rows are retained under a bounded cleanup window (index `idx_webhook_deliveries_created_at`) that does not over-delete recent replay records.
+- **LIVE VERIFIED:** bad signature → `401`; valid signature accepted; duplicate delivery ignored (live test 13).
+- **STATIC VERIFIED:** security tests 16–22.
+
+---
+
+## 9. Database Security
+
+- **Privilege separation:** application runtime uses `DB_APP_USER`/`DB_APP_PASSWORD` only; the provisioning superuser (`DB_USER`/`DB_PASSWORD`) is used solely by `db:init` and is **not** injected into the backend runtime. Production runtime rejects known-insecure default passwords.
+- Lifecycle split into `db:init` (create DB + restricted role + grants) → `db:migrate` (versioned SQL) → `db:seed` (RBAC + one Super Admin).
+- **LIVE VERIFIED:** all three run cleanly; `003_hardening.sql` (audit `project_id`, `ws_tickets`, webhook index) applied on a live DB.
+- **STATIC VERIFIED:** security tests 23–26 (production startup performs no DB init; aborts without secrets; runtime uses app user only; no default admin password).
+
+---
+
+## 10. Docker Security
+
+- Multi-stage builds; `npm ci --omit=dev`; non-root runtime users.
+- Compose prod: `security_opt: no-new-privileges`, `cap_drop: ALL` (with the minimal `cap_add` required by Postgres/Nginx bind), read-only cert mount, JSON log rotation, and `HEALTHCHECK` on backend/frontend/AI.
+- `.dockerignore` added for backend/frontend/ai-module to keep secrets and `node_modules` out of build contexts.
+- **LIVE VERIFIED:** all three prod images build; containers report healthy.
+
+---
+
+## 11. TLS / Nginx
+
+- TLS 1.2/1.3, `ssl_ciphers HIGH:!aNULL:!MD5`, HSTS (`max-age=31536000; includeSubDomains`).
+- Security headers: `X-Frame-Options SAMEORIGIN`, `X-Content-Type-Options nosniff`, `Referrer-Policy`, `Permissions-Policy`, and a restrictive CSP (`default-src 'self'`, `script-src 'self'`, `frame-ancestors 'self'`).
+- ACME challenge served on HTTP before the blanket 301 redirect.
+- **`/metrics` is intentionally NOT proxied at the public edge** — Prometheus scrapes `backend:5000/metrics` on the private network only.
+- **LIVE VERIFIED:** `http://localhost/` → `301` to HTTPS; HTTPS `/health` `200` with the headers above; `https://localhost/metrics` returns the SPA `text/html` (not backend metrics), confirming no public metrics exposure.
+
+---
+
+## 12. AI Security
+
+- The AI module requires `X-Internal-Token`; unauthenticated calls are rejected.
+- The backend `aiService` gateway calls the module with a 30s timeout and **never serves unlabeled mock output**: unreachable / non-2xx / parse errors throw `AiUnavailableError` → HTTP `503` with `execution_mode: "DEGRADED"`. All five former silent-mock fallbacks were removed.
+- `execution_mode` propagates the module's honest engine label: `LIVE` **only** when the module reports `engine: "LIVE"` (Gemini genuinely ran), else `SIMULATED`.
+- **SIMULATED (live-verified as labelled):** with `AI_MODE=simulated` the module returns `engine:"SIMULATED"`.
+- **NOT VERIFIED:** the Gemini `LIVE` branch (no API key in this environment) and the AI-container token-rejection path (AI container `/health` reachable internally; the enforced rejection was verified statically/prior).
+
+---
+
+## 13. Observability
+
+- `getLiveMetrics` reports `source: "PROMETHEUS_LIVE"`, `execution_mode: "LIVE"` **only inside the successful-query block**. On failure with `PROMETHEUS_URL` set → `DEGRADED` (simulated placeholders + explicit notice); unset → `SIMULATED`.
+- Centralized logs and SRE dashboards label simulated data honestly.
+- **NOT VERIFIED:** live Prometheus querying (no instance configured here). Frontend badges display `execution_mode` honestly in Monitoring/Deployments/SRE.
+
+---
+
+## 14. GitOps
+
+Reconciler sync/drift operations run in `execution_mode: "SIMULATED"` (DB bookkeeping; no live ArgoCD/cluster calls). **SIMULATED / STATIC VERIFIED.**
+
+## 15. Terraform
+
+HCL generation delegates to the AI module (honest `LIVE`/`SIMULATED`), returning `503 DEGRADED` when the generator is unreachable (static template explicitly labelled as non-AI). Plan/apply logs are `execution_mode: "SIMULATED"`; policy checks block `0.0.0.0/0` SSH. State ids and `project_id` are UUID-validated; apply audits are project-scoped. **SIMULATED / LIVE-verified labelling.**
+
+## 16. Chaos Engineering
+
+Scenario **allowlist** (`CPU_STRESS`, `POD_KILL`, `NETWORK_DELAY`, `MEMORY_PRESSURE`), positive-integer duration cap, name/target length limits, project UUID validation, project-scoped audit, and `execution_mode: "SIMULATED"` on reports/history. No real cluster fault injection occurs. **SIMULATED.**
+
+## 17. SRE
+
+SLO/SLI figures are labelled `SIMULATED` (stored reference targets, not live measurements). Incident create/resolve are validated and project-scoped. **Self-healing records now say `Recommended (SIMULATED): kubectl ...` with status `SIMULATED` — the previous fake `SUCCESS` was removed.** Postmortem generation uses the AI gateway (`503 DEGRADED` if unavailable; no fabricated template). Self-healing action listing is tenant-isolated. **SIMULATED / LIVE-verified labelling.**
+
+## 18. Helm
+
+- Chart externalizes the database: `env.dbHost` is **`required()`** — it never silently assumes an in-cluster `postgres`.
+- `secret.yaml` uses `required()` for `dbAppPassword`, `jwtSecret`, `aiInternalToken`, `githubWebhookSecret` (Gemini optional) → render fails without them.
+- Backend/ai run with hardened `securityContext`; frontend Nginx keeps only the minimal capabilities needed to bind ports; `PROMETHEUS_URL` wired as optional env.
+- **LIVE VERIFIED:** `helm lint` → `0 chart(s) failed`; `helm template` renders 8 workloads with values supplied; omitting secrets aborts the render with a clear `required()` error (no silent defaults).
+- **NOT VERIFIED:** `helm install` against a real Kubernetes cluster (no cluster available here).
+
+## 19. CI/CD
+
+`.github/workflows/deploymate-ci.yml` runs, with **no `|| true` masking anywhere**: backend build + compiled security regression tests + `npm audit`; a **Postgres-backed live-integration job** (`db:init/migrate/seed` → start server → `/health` gate → `LIVE_INTEGRATION=1` suite); frontend build; AI compile-check; `docker compose config -q` + full image build; and `helm lint` + `helm template` (with required values asserted). **STATIC VERIFIED** (workflow authored; individual commands reproduced locally as documented below).
+
+## 20. Automated Test Results
+
+Security regression suite — **STATIC VERIFIED, 31/31 PASSED** (`node dist/__tests__/security.test.js`), covering tenant isolation (1–11), WebSocket tickets (12–15), webhooks (16–22), DB lifecycle/secrets (23–26), 12-char password policy (27–29), UUID + WS-ticket format (30–31).
+
+Backend `tsc` build and frontend `vite build` — **STATIC VERIFIED**, exit 0.
+
+## 21. Live Environment Verification
+
+Against a genuinely running `docker-compose.prod.yml` stack — **LIVE VERIFIED**:
+- `docker compose config -q` → exit 0; three images built; `ps` shows backend/db/ai **healthy**, frontend up; **only 80/443 published** (5000/8000/5432 internal).
+- `db:init` → `db:migrate` (applied `003_hardening.sql`) → `db:seed` all exit 0.
+- **Live integration suite — 14/14 PASSED**: health/ready, login, session revocation, Developer-cannot-create (least privilege), cross-tenant deny + owner allow, listing excludes other tenant, WS ticket issue, real WS `101` upgrade, replay→401, JWT-query→401, malformed→401, password policy 400/201, webhook HMAC + replay.
+- HTTPS 301 redirect + header set; `/metrics` not publicly exposed.
+
+## 22. Simulated Features (by design)
+
+GitOps reconcile/sync/drift, Terraform plan/apply, Chaos injection, Kubernetes read/rollback when no kubeconfig is attached, SRE self-healing recommendations, DevSecOps scans when Trivy/SonarQube are absent (`scan_status: NOT_EXECUTED`), AI analysis when the engine is not `LIVE`, monitoring when no Prometheus, and centralized log content. Every one is returned with an explicit `execution_mode` and, where relevant, a `notice`.
+
+## 23. Known Limitations
+
+1. **Rate limiting is process-local** (`express-rate-limit` in-memory). Behind >1 replica without sticky sessions, effective limits are N× the configured value. Not a correctness/isolation issue, but the enforcement ceiling scales with replica count. Recommend a shared store if edge rate limits must be global.
+2. **Multi-replica WS handoff not load-tested** — the Postgres ticket store is correct by construction, but no 2-replica concurrency test was run.
+3. **External LIVE integrations (K8s, Prometheus, Gemini, Trivy/Sonar/GitHub) NOT VERIFIED** end-to-end; they must be validated against the real systems in the target environment before relying on their `LIVE` paths.
+4. The AI-container internal-token rejection and Gemini `LIVE` branch were verified statically/by labelling, not against a live AI+Gemini deployment in this run.
+
+## 24. Production Deployment Checklist
+
+- [ ] Supply unique `JWT_SECRET`, `AI_INTERNAL_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `DB_APP_PASSWORD`, `DB_PASSWORD`, `INITIAL_ADMIN_PASSWORD` (≥12 chars, none a default).
+- [ ] Point `DB_HOST` / Helm `env.dbHost` at the external managed Postgres (chart will not render without it).
+- [ ] Install real TLS certificates (or ACME) — do not ship the self-signed dev pair.
+- [ ] Set `PROMETHEUS_URL` for live telemetry; leave unset to keep honest `SIMULATED`.
+- [ ] Provide `GEMINI_API_KEY` + `AI_MODE=live` only when Gemini use is authorized; otherwise `simulated`.
+- [ ] Run `db:init` → `db:migrate` → `db:seed` once during provisioning.
+- [ ] Confirm only 80/443 are publicly bound; keep `/metrics` off the public edge.
+- [ ] Run the CI pipeline green (build, security tests, live integration, compose config/build, helm lint/template).
+- [ ] Load-test ≥2 backend replicas for the WS ticket handoff and decide on a shared rate-limit store.
+- [ ] Validate each external integration's `LIVE` path in the target environment.
+
+### Final Verdict
 
 ```text
-[Backend TypeScript Check]
-Command: npx tsc --noEmit (in backend/)
-Result: PASSED (Exit Code 0)
+CORE SECURITY CONTROLS .................. PRODUCTION READY (STATIC + LIVE VERIFIED)
+  (authz, tenant isolation, WS security, webhook HMAC+replay,
+   password policy, secret validation, DB lifecycle, infra config)
 
-[Frontend Production Build]
-Command: npm run build (in frontend/)
-Result: PASSED (Exit Code 0, built in 3.15s)
+OPTIONAL LIVE INTEGRATIONS .............. NOT VERIFIED IN THIS ENVIRONMENT
+  (real Kubernetes API, Prometheus, Gemini LIVE AI,
+   Trivy/SonarQube/GitHub, multi-replica scale test)
 
-[AI Microservice Compilation]
-Command: python -m py_compile main.py (in ai-module/)
-Result: PASSED (Exit Code 0)
-
-[Backend Security Regression Test Suite]
-Command: npx ts-node src/__tests__/security.test.ts (in backend/)
-Results:
-✅ Test 1 Passed: User A cannot access Project B
-✅ Test 2 Passed: User A cannot access Project B pipeline
-✅ Test 3 Passed: User A cannot access Project B pipeline run
-✅ Test 4 Passed: User A cannot access Project B deployment
-✅ Test 5 Passed: User A cannot access Project B Terraform state
-✅ Test 6 Passed: User A cannot access Project B GitOps history
-✅ Test 7 Passed: User A cannot access Project B chaos history
-✅ Test 8 Passed: User A cannot access Project B incidents
-✅ Test 9 Passed: User A cannot access Project B logs
-✅ Test 10 Passed: User A cannot open Project B WebSocket logs
-✅ Test 11 Passed: User A cannot open Project B terminal
-✅ Test 12 Passed: Invalid WebSocket ticket rejected
-✅ Test 13 Passed: Expired WebSocket ticket rejected
-✅ Test 14 Passed: Reused WebSocket ticket rejected
-✅ Test 15 Passed: JWT query-string WebSocket authentication rejected
-✅ Test 16 Passed: Invalid webhook signature rejected
-✅ Test 17 Passed: Missing webhook signature rejected
-✅ Test 18 Passed: Missing delivery ID rejected
-✅ Test 19 Passed: Duplicate delivery ignored
-✅ Test 20 Passed: Valid webhook triggers exactly one run
-✅ Test 21 Passed: Ambiguous repository mapping does not trigger a run
-✅ Test 22 Passed: Unsupported GitHub event does not trigger a run
-✅ Test 23 Passed: Production startup does not perform DB initialization
-✅ Test 24 Passed: Production startup fails when required secrets are missing
-✅ Test 25 Passed: Production runtime uses only DB_APP_USER/DB_APP_PASSWORD
-✅ Test 26 Passed: DB lifecycle scripts are separated and have no default admin password
-Status: 26/26 TESTS PASSED CLEANLY
-
-[Dependency Vulnerability Audit]
-Backend (npm audit): 0 vulnerabilities found
-Frontend (npm audit): 0 vulnerabilities found
-
-[Docker Compose Production Configuration Validation]
-Command: docker compose -f docker-compose.prod.yml config
-Result: PASSED (Exit Code 0)
-```
-
----
-
-## 3. Live Production Stack Audit Results
-
-```text
-[Docker Stack Operational Status]
-Command: docker compose -f docker-compose.prod.yml ps
-Results:
-- deploymate-db-prod        postgres:16-alpine         Up (healthy)    5432/tcp (internal)
-- deploymate-backend-prod   deploymate-test-backend    Up (healthy)    5000/tcp (internal)
-- deploymate-ai-module-prod deploymate-test-ai-module  Up (healthy)    8000/tcp (internal)
-- deploymate-frontend-prod  deploymate-test-frontend   Up (running)    0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp (public)
-
-[Network Port Exposure Audit]
-Command: docker ps
-Results: Only Ports 80 and 443 are publicly bound to host 0.0.0.0. Ports 5000, 8000, and 5432 operate strictly inside private container network 'deploymate-net'.
-
-[Live HTTP -> HTTPS Redirect Verification]
-Command: curl.exe -I http://localhost/
-Result: HTTP/1.1 301 Moved Permanently (Location: https://localhost/)
-
-[Live HTTPS Health & Readiness Verification]
-Command: curl.exe -k -i https://localhost/health
-Result: HTTP/1.1 200 OK {"status":"HEALTHY","service":"deploymate-backend",...}
-
-Command: curl.exe -k -i https://localhost/ready
-Result: HTTP/1.1 200 OK {"status":"READY","database":"CONNECTED",...}
-
-[Live Database Lifecycle Execution]
-Commands:
-- docker exec -e DB_USER=postgres -e DB_PASSWORD=*** deploymate-backend-prod npm run db:init -> PASSED
-- docker exec deploymate-backend-prod npm run db:migrate -> PASSED (001_init_schema.sql, 002_security_sessions_reset.sql applied)
-- docker exec deploymate-backend-prod npm run db:seed -> PASSED (Super Admin created)
-
-[Live Authentication & Session Revocation Verification]
-Command: POST https://localhost/api/v1/auth/login
-Result: HTTP 200 OK (JWT issued)
-
-Command: GET https://localhost/api/v1/projects (with Bearer token)
-Result: HTTP 200 OK []
-
-Command: POST https://localhost/api/v1/auth/logout (with Bearer token)
-Result: HTTP 200 OK ("Logout successful.")
-
-Command: GET https://localhost/api/v1/projects (with revoked token)
-Result: HTTP 401 Unauthorized ("Session has been revoked or logged out.")
-
-[Live WebSocket Single-Use Ticket Authorization Verification]
-Command: POST /api/v1/auth/ws-ticket
-Result: HTTP 200 OK (ticket issued)
-
-Command: GET /ws/logs?ticket=<ticket> (First connection attempt)
-Result: HTTP 101 Switching Protocols UPGRADED
-
-Command: GET /ws/logs?ticket=<ticket> (Second connection attempt - Ticket reuse)
-Result: HTTP 401 Unauthorized ("Invalid or expired ticket")
-
-Command: GET /ws/logs?token=<jwt_token> (Query string JWT auth attempt)
-Result: HTTP 401 Unauthorized ("JWT query-string WebSocket authentication rejected. Use ws-ticket.")
-
-[Live Multi-Tenant Isolation Audit]
-Results:
-- User A accessing User B project: HTTP 403 Forbidden
-- User B accessing User A project: HTTP 403 Forbidden
-
-[Live AI Module Internal Token Gate Audit]
-Command: GET http://ai-module:8000/health -> {"status":"HEALTHY","engine":"SIMULATED","ai_mode":"simulated"}
-Command: POST http://ai-module:8000/api/v1/ai/log-analysis (without X-Internal-Token) -> HTTP 401/403 Forbidden
-Command: POST http://ai-module:8000/api/v1/ai/log-analysis (with valid X-Internal-Token) -> HTTP 200 OK
-
-[Nginx Configuration Test]
-Command: docker exec deploymate-frontend-prod nginx -t
-Result: syntax is ok, test is successful
-```
-
----
-
-## 4. Final Production Readiness Certification
-
-```text
-PRODUCTION READY
+OVERALL UNCONDITIONAL CERTIFICATION ..... WITHHELD
+DEPLOYMATE is safe to operate in its labelled SIMULATED/DEGRADED modes today.
+Full "PRODUCTION READY" across every integration is DEFERRED until the §23
+external-system and multi-replica gates are exercised in the target environment.
 ```

@@ -4,6 +4,7 @@ import { query } from '../config/db';
 import { executePipelineRun } from '../services/pipelineEngine';
 import { EventBus } from '../services/eventBus';
 import { sendSafeError } from '../utils/securityUtils';
+import { insertAuditLog } from '../services/auditService';
 
 const processedDeliveryIds = new Set<string>();
 
@@ -141,16 +142,16 @@ export async function handleGitHubWebhook(req: Request, res: Response): Promise<
     const runId = runRes.rows[0].id;
     const runNumber = runRes.rows[0].run_number;
 
-    // Record Audit Log entry
-    await query(
-      `INSERT INTO audit_logs (action, resource, details)
-       VALUES ($1, $2, $3)`,
-      [
-        'WEBHOOK_PIPELINE_TRIGGER',
-        `Pipeline#${pipeline_id}`,
-        JSON.stringify({ eventType, repoUrl, branch, commitSha, runId, pusher: pusherName, project_id })
-      ]
-    );
+    // Record Audit Log entry (project-scoped for tenant isolation)
+    await insertAuditLog({
+      userId: null,
+      action: 'WEBHOOK_PIPELINE_TRIGGER',
+      resource: `Pipeline#${pipeline_id}`,
+      resourceId: runId,
+      projectId: project_id,
+      details: { eventType, repoUrl, branch, commitSha, runId, pusher: pusherName, execution_mode: 'SIMULATED' },
+      req,
+    });
 
     // Emit EventBus event
     await EventBus.emit({

@@ -33,7 +33,7 @@ spec:
             - name: NODE_ENV
               value: {{ .Values.env.nodeEnv | quote }}
             - name: DB_HOST
-              value: {{ .Values.env.dbHost | quote }}
+              value: {{ required "env.dbHost is required. Point the platform at your external PostgreSQL host; the chart does not deploy or silently assume a 'postgres' service." .Values.env.dbHost | quote }}
             - name: DB_PORT
               value: {{ .Values.env.dbPort | quote }}
             - name: DB_NAME
@@ -64,6 +64,8 @@ spec:
               value: http://ai-module:{{ .Values.service.ai.port }}
             - name: FRONTEND_URL
               value: {{ .Values.env.frontendUrl | quote }}
+            - name: PROMETHEUS_URL
+              value: {{ .Values.env.prometheusUrl | default "" | quote }}
           livenessProbe:
             httpGet:
               path: /health
@@ -100,6 +102,19 @@ spec:
         - name: frontend
           image: "{{ .Values.image.frontend.repository }}:{{ .Values.image.frontend.tag }}"
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          # Nginx master runs as root to bind 80/443; drop all capabilities except those
+          # nginx genuinely needs and forbid privilege escalation.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+                - CHOWN
+                - SETUID
+                - SETGID
+                - DAC_OVERRIDE
           ports:
             - name: http
               containerPort: 80

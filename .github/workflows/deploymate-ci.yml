@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# Every step runs under default `set -e` semantics: any non-zero exit fails the
+# job. There is intentionally NO `|| true` anywhere in this pipeline (hardening
+# spec §29). A green run means the checks genuinely passed.
 jobs:
   backend-test-and-build:
     name: Backend CI (TypeScript + Security Tests + Build)
@@ -24,20 +27,102 @@ jobs:
           cd backend
           npm ci
 
-      - name: Run Security Regression Tests
+      - name: Run TypeScript Build Check
         run: |
           cd backend
-          npx ts-node src/__tests__/security.test.ts
+          npm run build
+
+      - name: Run Security Regression Tests (compiled)
+        run: |
+          cd backend
+          npm run test:security
 
       - name: Run Dependency Audit
         run: |
           cd backend
           npm audit --audit-level=high
 
-      - name: Run TypeScript Build Check
+  backend-integration:
+    name: Backend Live Integration (Postgres + HTTP + WebSocket + Webhook HMAC)
+    runs-on: ubuntu-latest
+    needs: backend-test-and-build
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_superuser_pw_2026
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: production
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_USER: postgres
+      DB_PASSWORD: ci_superuser_pw_2026
+      DB_NAME: deploymate
+      DB_APP_USER: deploymate_app
+      DB_APP_PASSWORD: ci_app_pw_2026_abcdef
+      JWT_SECRET: ci-jwt-secret-value-not-a-default-32byteslong
+      AI_INTERNAL_TOKEN: ci-internal-ai-token-value-not-default
+      GITHUB_WEBHOOK_SECRET: ci-github-webhook-secret-not-default
+      INITIAL_ADMIN_EMAIL: admin@deploymate.test
+      INITIAL_ADMIN_PASSWORD: CiSuperAdmin#2026pass
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install & Build
         run: |
           cd backend
+          npm ci
           npm run build
+
+      - name: Provision DB (init + migrate + seed)
+        run: |
+          cd backend
+          npm run db:init
+          npm run db:migrate
+          npm run db:seed
+
+      - name: Start backend server
+        run: |
+          cd backend
+          node dist/index.js > /tmp/backend.log 2>&1 &
+          echo "started"
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:5000/health > /dev/null; then
+              echo "backend healthy"; exit 0
+            fi
+            sleep 2
+          done
+          echo "backend never became healthy; logs:"; cat /tmp/backend.log; exit 1
+
+      - name: Run live integration tests
+        env:
+          LIVE_INTEGRATION: '1'
+          BASE_URL: http://localhost:5000
+        run: |
+          cd backend
+          npm run test:live
+
+      - name: Print backend logs on failure
+        if: failure()
+        run: if [ -f /tmp/backend.log ]; then cat /tmp/backend.log; else echo "no backend log"; fi
 
   frontend-test-and-build:
     name: Frontend CI (Vite + React 19 + Build)
@@ -78,3 +163,50 @@ jobs:
           cd ai-module
           pip install -r requirements.txt
           python -m compileall .
+
+  docker-compose-build:
+    name: Docker Compose Config + Image Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate compose file structure
+        run: docker compose -f docker-compose.prod.yml config -q
+
+      - name: Build all production images
+        run: docker compose -f docker-compose.prod.yml build
+
+  helm-ci:
+    name: Helm Lint & Template
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.4'
+
+      - name: Helm Lint
+        run: |
+          helm lint ./helm \
+            --set env.dbHost=postgres.example.com \
+            --set secrets.dbAppPassword=lintapp_pw_2026 \
+            --set secrets.jwtSecret=lint-jwt-secret-not-default-value \
+            --set secrets.aiInternalToken=lint-internal-ai-token \
+            --set secrets.githubWebhookSecret=lint-webhook-secret
+
+      - name: Helm Template (render manifests)
+        run: |
+          helm template deploymate ./helm \
+            --set env.dbHost=postgres.example.com \
+            --set secrets.dbAppPassword=lintapp_pw_2026 \
+            --set secrets.jwtSecret=lint-jwt-secret-not-default-value \
+            --set secrets.aiInternalToken=lint-internal-ai-token \
+            --set secrets.githubWebhookSecret=lint-webhook-secret \
+            > /tmp/rendered.yaml
+          test -s /tmp/rendered.yaml
+          grep -q "kind: Deployment" /tmp/rendered.yaml
+          grep -q "kind: Ingress" /tmp/rendered.yaml

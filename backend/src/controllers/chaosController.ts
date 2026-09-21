@@ -2,7 +2,11 @@ import { Response } from 'express';
 import { query } from '../config/db';
 import { EventBus } from '../services/eventBus';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { sendSafeError } from '../utils/securityUtils';
+import { sendSafeError, isValidUuid } from '../utils/securityUtils';
+import { insertAuditLog } from '../services/auditService';
+
+// Strict scenario allowlist (hardening spec §10) — no arbitrary scenario strings
+const ALLOWED_SCENARIOS = ['CPU_STRESS', 'POD_KILL', 'NETWORK_DELAY', 'MEMORY_PRESSURE'];
 
 export async function injectChaos(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { name, scenario_type, target_resource, duration_seconds, project_id } = req.body;
@@ -12,14 +16,29 @@ export async function injectChaos(req: AuthenticatedRequest, res: Response): Pro
     return;
   }
 
+  if (!ALLOWED_SCENARIOS.includes(scenario_type)) {
+    res.status(400).json({ message: `Invalid scenario_type. Allowed scenarios: ${ALLOWED_SCENARIOS.join(', ')}.` });
+    return;
+  }
+
+  if (String(name).length > 100 || String(target_resource).length > 255) {
+    res.status(400).json({ message: 'Name must be ≤100 characters and target resource ≤255 characters.' });
+    return;
+  }
+
+  if (project_id && !isValidUuid(project_id)) {
+    res.status(400).json({ message: 'Invalid project ID format.' });
+    return;
+  }
+
   if (!project_id && req.user?.role !== 'Super Admin') {
     res.status(400).json({ message: 'Valid project ID is required for chaos experiment creation.' });
     return;
   }
 
   const duration = Number(duration_seconds);
-  if (duration > 300) {
-    res.status(400).json({ message: 'Safety Constraint: Maximum experiment duration is capped at 300 seconds.' });
+  if (!Number.isInteger(duration) || duration <= 0 || duration > 300) {
+    res.status(400).json({ message: 'Safety Constraint: duration_seconds must be a positive integer capped at 300 seconds.' });
     return;
   }
 
@@ -38,6 +57,9 @@ export async function injectChaos(req: AuthenticatedRequest, res: Response): Pro
     } else if (scenario_type === 'NETWORK_DELAY') {
       resilienceScore = 72;
       description = 'Latency threshold crossed (150ms delay, Simulated). HTTP request queue limits saturated, minor HTTP 504 timeouts.';
+    } else if (scenario_type === 'MEMORY_PRESSURE') {
+      resilienceScore = 80;
+      description = 'Memory pressure triggered simulated OOM eviction; workload recovered after limit rebalance (Simulated).';
     } else {
       resilienceScore = 90;
       description = 'Resilience experiment simulated successfully.';
@@ -82,6 +104,17 @@ export async function injectChaos(req: AuthenticatedRequest, res: Response): Pro
       ]
     );
 
+    // Project-scoped audit trail
+    await insertAuditLog({
+      userId: req.user?.id ?? null,
+      action: 'CHAOS_EXPERIMENT_EXECUTED',
+      resource: 'CHAOS_EXPERIMENT',
+      resourceId: insertRes.rows[0]?.id,
+      projectId: project_id || null,
+      details: { name, scenario_type, target_resource, resilienceScore, execution_mode: 'SIMULATED' },
+      req,
+    });
+
     // Emit EventBus event
     await EventBus.emit({
       eventType: 'RESILIENCE_EXPERIMENT_COMPLETED',
@@ -103,6 +136,11 @@ export async function injectChaos(req: AuthenticatedRequest, res: Response): Pro
 
 export async function getChaosHistory(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { projectId } = req.query;
+
+  if (projectId && !isValidUuid(String(projectId))) {
+    res.status(400).json({ message: 'Invalid project ID format.' });
+    return;
+  }
 
   try {
     let listRes;

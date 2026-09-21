@@ -1,6 +1,13 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
-import { sendSafeError } from '../utils/securityUtils';
+import { sendSafeError, isValidUuid } from '../utils/securityUtils';
+
+const SONAR_RATINGS = ['A', 'B', 'C', 'D', 'F'];
+
+function isValidNonNegativeInt(value: unknown): boolean {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 && n <= 100000;
+}
 
 export interface ScanThreshold {
   pipeline_id: string;
@@ -14,6 +21,26 @@ export async function setScanThresholds(req: Request, res: Response): Promise<vo
 
   if (!pipeline_id) {
     res.status(400).json({ message: 'Pipeline ID is required.' });
+    return;
+  }
+
+  if (!isValidUuid(pipeline_id)) {
+    res.status(400).json({ message: 'Invalid pipeline ID format.' });
+    return;
+  }
+
+  if (fail_on_critical_count !== undefined && !isValidNonNegativeInt(fail_on_critical_count)) {
+    res.status(400).json({ message: 'fail_on_critical_count must be a non-negative integer.' });
+    return;
+  }
+
+  if (fail_on_high_count !== undefined && !isValidNonNegativeInt(fail_on_high_count)) {
+    res.status(400).json({ message: 'fail_on_high_count must be a non-negative integer.' });
+    return;
+  }
+
+  if (fail_on_sonar_rating !== undefined && !SONAR_RATINGS.includes(fail_on_sonar_rating)) {
+    res.status(400).json({ message: `fail_on_sonar_rating must be one of: ${SONAR_RATINGS.join(', ')}.` });
     return;
   }
 
@@ -52,6 +79,11 @@ export async function getPipelineSecurityReport(req: Request, res: Response): Pr
     return;
   }
 
+  if (!isValidUuid(runId)) {
+    res.status(400).json({ message: 'Invalid pipeline run ID format.' });
+    return;
+  }
+
   try {
     const scanRes = await query(
       `SELECT * FROM pipeline_security_scans 
@@ -62,29 +94,14 @@ export async function getPipelineSecurityReport(req: Request, res: Response): Pr
     );
 
     if (scanRes.rowCount === 0) {
-      // Return a structured baseline report if scan execution hasn't finished
-      res.status(200).json({
-        id: 'scan-pending',
+      // Hardening spec §13: never fabricate placeholder CVEs or scores. When no scan
+      // record exists yet, honestly report NOT_EXECUTED.
+      res.status(404).json({
+        message: 'No security scan results exist for this pipeline run yet.',
+        scan_status: 'NOT_EXECUTED',
+        execution_mode: 'NOT_EXECUTED',
         pipeline_run_id: runId,
-        sonar_maintainability_score: 'A',
-        sonar_reliability_score: 'B',
-        sonar_security_score: 'A',
-        sonar_coverage_percentage: 89.5,
-        sonar_technical_debt_minutes: 25,
-        trivy_critical_count: 0,
-        trivy_high_count: 1,
-        trivy_medium_count: 3,
-        trivy_low_count: 8,
-        owasp_cve_count: 0,
-        scan_report_json: {
-          scanned_at: new Date().toISOString(),
-          vulnerabilities: [
-            { id: 'CVE-2024-1234', severity: 'HIGH', library: 'axios', description: 'ReDoS in axio-base URL parser' },
-            { id: 'CVE-2023-4567', severity: 'MEDIUM', library: 'express', description: 'Prototype pollution in body-parser' }
-          ]
-        },
-        is_passed: true,
-        created_at: new Date()
+        vulnerabilities: [],
       });
       return;
     }

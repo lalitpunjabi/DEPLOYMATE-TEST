@@ -2,7 +2,8 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { executePipelineRun } from '../services/pipelineEngine';
-import { sendSafeError } from '../utils/securityUtils';
+import { sendSafeError, isValidUuid } from '../utils/securityUtils';
+import { insertAuditLog } from '../services/auditService';
 
 export async function listPipelines(req: AuthenticatedRequest, res: Response): Promise<void> {
   const { projectId } = req.query;
@@ -35,6 +36,16 @@ export async function createPipeline(req: AuthenticatedRequest, res: Response): 
 
   if (!projectId || !name) {
     res.status(400).json({ message: 'projectId and pipeline name are required.' });
+    return;
+  }
+
+  if (!isValidUuid(projectId)) {
+    res.status(400).json({ message: 'projectId must be a valid UUID.' });
+    return;
+  }
+
+  if (typeof name !== 'string' || name.trim().length === 0 || name.length > 200) {
+    res.status(400).json({ message: 'Pipeline name must be a non-empty string of at most 200 characters.' });
     return;
   }
 
@@ -79,7 +90,7 @@ export async function runPipeline(req: AuthenticatedRequest, res: Response): Pro
       return;
     }
 
-    const { name } = pipelineCheck.rows[0];
+    const { name, project_id: pipelineProjectId } = pipelineCheck.rows[0];
 
     // Create a new pipeline run entry in PostgreSQL
     const runRes = await query(
@@ -96,18 +107,16 @@ export async function runPipeline(req: AuthenticatedRequest, res: Response): Pro
       console.error(`Asynchronous Pipeline Run ${newRun.id} failed:`, err);
     });
 
-    // Create audit log
-    await query(
-      `INSERT INTO audit_logs (user_id, action, resource, resource_id, details)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        req.user.id,
-        'TRIGGER',
-        'PIPELINE_RUN',
-        newRun.id,
-        JSON.stringify({ pipelineName: name, runNumber: newRun.run_number })
-      ]
-    );
+    // Create audit log (project-scoped)
+    await insertAuditLog({
+      userId: req.user.id,
+      action: 'TRIGGER',
+      resource: 'PIPELINE_RUN',
+      resourceId: newRun.id,
+      projectId: pipelineProjectId,
+      details: { pipelineName: name, runNumber: newRun.run_number, execution_mode: 'SIMULATED' },
+      req,
+    });
 
     res.status(201).json({
       message: 'Pipeline run triggered successfully.',

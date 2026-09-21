@@ -58,6 +58,9 @@ services:
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD}
       AI_SERVICE_URL: http://ai-module:8000
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      # Optional: point at a Prometheus instance for LIVE telemetry. When unset,
+      # monitoring honestly reports execution_mode=SIMULATED (never fake "live").
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-}
     # Port 5000 is isolated inside private internal container network
     depends_on:
       postgres:
