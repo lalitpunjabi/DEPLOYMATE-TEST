@@ -141,24 +141,38 @@ AI_INTERNAL_TOKEN=<your_internal_service_token>
 
 ## 4. Installation & Booting Guide
 
-### Option A: Single-Command Docker Setup (Recommended)
+### Option A: Production Docker Compose Deployment (Recommended)
 
-Run the entire DEPLOYMATE platform (Frontend, Backend API, AI Microservice, and PostgreSQL Database) with a **single command** — no need to open multiple terminal windows or execute manual database setup scripts!
+Run the hardened DEPLOYMATE production stack (Nginx Reverse Proxy, Backend Control Plane, AI Microservice, and PostgreSQL Database):
 
-```bash
-docker compose up --build
-```
+1. Copy `.env.production.example` to `.env` and configure unique production secrets.
+2. Initialize database, run SQL migrations, and seed initial roles:
+   ```bash
+   cd backend
+   npm run db:init
+   npm run db:migrate
+   npm run db:seed
+   cd ..
+   ```
+3. Generate or mount SSL certificates into `./certs/` (`fullchain.pem` and `privkey.pem`):
+   ```bash
+   bash scripts/generate_certs.sh
+   ```
+4. Launch the production Docker Compose stack:
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d --build
+   ```
 
-**Automated Orchestration Features:**
-- **Automated Database Initialization**: Automatically runs SQL migrations (`001_init_schema.sql`, `002_security_sessions_reset.sql`), creates database tables, seeds RBAC roles (`Super Admin`, `DevOps Engineer`, `Developer`, `Viewer`), and initializes default Super Admin credentials (`admin@deploymate.com` / `admin123`).
-- **Health-Checked Dependency Graph**: Backend waits for PostgreSQL container health checks, and Frontend waits for Backend readiness before launching.
-- **Single-Page Application Fallback**: Nginx configured with SPA routing so page refreshes and direct URLs work smoothly.
+**Production Security & Network Isolation:**
+- **Single Entry Point**: Only Nginx frontend container exposes public HTTP/HTTPS ports (`80` and `443`).
+- **Internal Private Network**: PostgreSQL (`5432`), Backend (`5000`), and AI Microservice (`8000`) have NO exposed host ports and operate exclusively inside private container network `deploymate-net`.
+- **Database Lifecycle Separation**: Production application startup (`npm start`) does not execute database initialization, migrations, or seeding. Migration and seeding are executed through dedicated scripts (`npm run db:migrate`, `npm run db:seed`).
 
 **Exposed Endpoints:**
-- **Frontend Portal**: `http://localhost` (also accessible on `http://localhost:5173`)
-- **Backend API Gateway**: `http://localhost:5000`
-- **FastAPI AI Microservice**: `http://localhost:8000`
-- **PostgreSQL Database**: `localhost:5432`
+- **Public Portal (Nginx Reverse Proxy)**: `https://localhost` (or `http://localhost` with 301 redirect)
+- **Backend API Gateway (Internal)**: `http://backend:5000` (proxied via `/api/v1/`)
+- **FastAPI AI Microservice (Internal)**: `http://ai-module:8000` (private to backend)
+- **PostgreSQL Database (Internal)**: `postgres:5432` (private to backend)
 
 ---
 
